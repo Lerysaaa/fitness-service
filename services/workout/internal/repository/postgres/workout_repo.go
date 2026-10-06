@@ -3,29 +3,44 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
 
+	"fitness-platform/pkg/events"
 	"fitness-platform/services/workout/internal/domain"
 	"fitness-platform/services/workout/internal/repository"
 )
 
 type WorkoutRepo struct {
-	pool *pgxpool.Pool
+	pool             *pgxpool.Pool
+	operationTimeout time.Duration
 }
 
-func NewWorkoutRepo(pool *pgxpool.Pool) repository.WorkoutRepository {
-	return &WorkoutRepo{pool: pool}
+func NewWorkoutRepo(pool *pgxpool.Pool, operationTimeout time.Duration) repository.WorkoutRepository {
+	return &WorkoutRepo{
+		pool:             pool,
+		operationTimeout: operationTimeout,
+	}
 }
 
 // CreateWorkout создаёт тренировку и связанные подходы в одной транзакции.
 func (r *WorkoutRepo) CreateWorkout(ctx context.Context, workout *domain.Workout, sets []domain.ExerciseSet) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx) // откат, если не закоммитим
+
+	defer func() {
+		rollbackCtx, rollbackCancel := r.operationCtx(context.Background())
+		defer rollbackCancel()
+
+		_ = tx.Rollback(rollbackCtx)
+	}() // откат, если не закоммитим
 
 	// Гарантируем, что Metrics не nil, чтобы не нарушить NOT NULL ограничение
 	if workout.Metrics == nil {
@@ -102,7 +117,10 @@ func (r *WorkoutRepo) CreateWorkout(ctx context.Context, workout *domain.Workout
 	}
 
 	_, err = tx.Exec(ctx,
-		`INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)`, "workout.created", eventPayload)
+		`INSERT INTO outbox_events (event_type, event_version, payload) VALUES ($1, $2, $3)`,
+		events.TypeWorkoutCreated,
+		events.Version1,
+		eventPayload)
 
 	if err != nil {
 		return fmt.Errorf("insert outbox_event: %w", err)
@@ -116,6 +134,9 @@ func (r *WorkoutRepo) CreateWorkout(ctx context.Context, workout *domain.Workout
 
 // GetWorkoutByID возвращает тренировку и её подходы.
 func (r *WorkoutRepo) GetWorkoutByID(ctx context.Context, workoutID string) (*domain.Workout, []domain.ExerciseSet, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	workoutQuery := `
 		SELECT id, user_id, name, date, notes, program_id, template_id, metrics, created_at, updated_at
 		FROM workouts
@@ -163,6 +184,9 @@ func (r *WorkoutRepo) GetWorkoutByID(ctx context.Context, workoutID string) (*do
 
 // ListWorkoutsByUser возвращает список тренировок пользователя с пагинацией.
 func (r *WorkoutRepo) ListWorkoutsByUser(ctx context.Context, userID string, limit, offset int) ([]domain.Workout, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		SELECT id, user_id, name, date, notes, program_id, template_id, metrics, created_at, updated_at
 		FROM workouts
@@ -191,6 +215,9 @@ func (r *WorkoutRepo) ListWorkoutsByUser(ctx context.Context, userID string, lim
 
 // DeleteWorkout удаляет тренировку (подходы удалятся каскадно).
 func (r *WorkoutRepo) DeleteWorkout(ctx context.Context, workoutID string) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	_, err := r.pool.Exec(ctx, `DELETE FROM workouts WHERE id = $1`, workoutID)
 	if err != nil {
 		return fmt.Errorf("delete workout: %w", err)
@@ -200,6 +227,9 @@ func (r *WorkoutRepo) DeleteWorkout(ctx context.Context, workoutID string) error
 
 // UpdateWorkout обновляет основные поля тренировки (без подходов).
 func (r *WorkoutRepo) UpdateWorkout(ctx context.Context, workout *domain.Workout) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	// Гарантируем, что Metrics не nil
 	if workout.Metrics == nil {
 		workout.Metrics = map[string]any{}
@@ -227,6 +257,9 @@ func (r *WorkoutRepo) UpdateWorkout(ctx context.Context, workout *domain.Workout
 
 // ListExercises возвращает все упражнения.
 func (r *WorkoutRepo) ListExercises(ctx context.Context) ([]domain.Exercise, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `SELECT id, name, muscle_group, category, created_at, updated_at FROM exercises ORDER BY name`
 	rows, err := r.pool.Query(ctx, query)
 	if err != nil {
@@ -247,6 +280,9 @@ func (r *WorkoutRepo) ListExercises(ctx context.Context) ([]domain.Exercise, err
 
 // CreateExercise создаёт новое упражнение.
 func (r *WorkoutRepo) CreateExercise(ctx context.Context, exercise *domain.Exercise) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		INSERT INTO exercises (name, muscle_group, category)
 		VALUES ($1, $2, $3)
@@ -262,6 +298,9 @@ func (r *WorkoutRepo) CreateExercise(ctx context.Context, exercise *domain.Exerc
 
 // GetExerciseByID возвращает упражнение по ID.
 func (r *WorkoutRepo) GetExerciseByID(ctx context.Context, exerciseID string) (*domain.Exercise, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `SELECT id, name, muscle_group, category, created_at, updated_at FROM exercises WHERE id = $1`
 	e := &domain.Exercise{}
 	err := r.pool.QueryRow(ctx, query, exerciseID).Scan(&e.ID, &e.Name, &e.MuscleGroup, &e.Category, &e.CreatedAt, &e.UpdatedAt)
@@ -276,11 +315,14 @@ func (r *WorkoutRepo) GetExerciseByID(ctx context.Context, exerciseID string) (*
 
 // CreateOutboxEvent вставляет новое событие в outbox.
 func (r *WorkoutRepo) CreateOutboxEvent(ctx context.Context, event *domain.OutboxEvent) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	if event.Payload == nil {
 		event.Payload = map[string]any{}
 	}
-	query := `INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2) RETURNING id, created_at`
-	err := r.pool.QueryRow(ctx, query, event.EventType, event.Payload).Scan(&event.ID, &event.CreatedAt)
+	query := `INSERT INTO outbox_events (event_type, event_version, payload) VALUES ($1, $2, $3) RETURNING id, created_at`
+	err := r.pool.QueryRow(ctx, query, event.EventType, event.EventVersion, event.Payload).Scan(&event.ID, &event.CreatedAt)
 	if err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
@@ -289,8 +331,11 @@ func (r *WorkoutRepo) CreateOutboxEvent(ctx context.Context, event *domain.Outbo
 
 // ListPendingOutboxEvents возвращает неопубликованные события.
 func (r *WorkoutRepo) ListPendingOutboxEvents(ctx context.Context, limit int) ([]domain.OutboxEvent, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
-		SELECT id, event_type, payload, created_at, published_at
+		SELECT id, event_type, event_version, payload, created_at, published_at
 		FROM outbox_events
 		WHERE published_at IS NULL
 		ORDER BY created_at
@@ -302,21 +347,24 @@ func (r *WorkoutRepo) ListPendingOutboxEvents(ctx context.Context, limit int) ([
 	}
 	defer rows.Close()
 
-	var events []domain.OutboxEvent
+	var outboxEvents []domain.OutboxEvent
 	for rows.Next() {
 		var e domain.OutboxEvent
 		if err := rows.Scan(
-			&e.ID, &e.EventType, &e.Payload, &e.CreatedAt, &e.PublishedAt,
+			&e.ID, &e.EventType, &e.EventVersion, &e.Payload, &e.CreatedAt, &e.PublishedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan outbox event: %w", err)
 		}
-		events = append(events, e)
+		outboxEvents = append(outboxEvents, e)
 	}
-	return events, rows.Err()
+	return outboxEvents, rows.Err()
 }
 
 // MarkOutboxEventPublished помечает событие как опубликованное.
 func (r *WorkoutRepo) MarkOutboxEventPublished(ctx context.Context, eventID string) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	_, err := r.pool.Exec(ctx, `UPDATE outbox_events SET published_at = NOW() WHERE id = $1`, eventID)
 	if err != nil {
 		return fmt.Errorf("mark outbox event published: %w", err)
@@ -326,11 +374,20 @@ func (r *WorkoutRepo) MarkOutboxEventPublished(ctx context.Context, eventID stri
 
 // UpdateWorkoutWithSets обновляет тренировку и полностью заменяет её подходы.
 func (r *WorkoutRepo) UpdateWorkoutWithSets(ctx context.Context, workout *domain.Workout, sets []domain.ExerciseSet) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	tx, err := r.pool.Begin(ctx)
 	if err != nil {
 		return fmt.Errorf("begin transaction: %w", err)
 	}
-	defer tx.Rollback(ctx)
+
+	defer func() {
+		rollbackCtx, rollbackCancel := r.operationCtx(context.Background())
+		defer rollbackCancel()
+
+		_ = tx.Rollback(rollbackCtx)
+	}()
 
 	// 1. Гарантируем, что Metrics не nil
 	if workout.Metrics == nil {
@@ -413,11 +470,21 @@ func (r *WorkoutRepo) UpdateWorkoutWithSets(ctx context.Context, workout *domain
 		"sets":       setsForEvent,
 	}
 	if _, err := tx.Exec(ctx,
-		`INSERT INTO outbox_events (event_type, payload) VALUES ($1, $2)`,
-		"workout.updated", eventPayload,
+		`INSERT INTO outbox_events (event_type, event_version, payload) VALUES ($1, $2, $3)`,
+		events.TypeWorkoutUpdated,
+		events.Version1,
+		eventPayload,
 	); err != nil {
 		return fmt.Errorf("insert outbox event: %w", err)
 	}
 
 	return tx.Commit(ctx)
+}
+
+func (r *WorkoutRepo) operationCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.operationTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+
+	return context.WithTimeout(ctx, r.operationTimeout)
 }

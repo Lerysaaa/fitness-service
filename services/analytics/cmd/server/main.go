@@ -48,7 +48,7 @@ func main() {
 	}
 
 	// 4. Подключение к базе данных
-	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := database.NewPool(ctx, cfg.DatabaseURL, cfg.DatabaseConnectTimeout, cfg.DatabaseOperationTimeout)
 	if err != nil {
 		logger.Log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
@@ -60,7 +60,7 @@ func main() {
 	}
 
 	// 6. Создаём репозиторий
-	analyticsRepo := postgres.NewAnalyticsRepo(pool)
+	analyticsRepo := postgres.NewAnalyticsRepo(pool, cfg.DatabaseOperationTimeout)
 
 	// 7. Создаём сервис
 	analyticsService := service.NewAnalyticsService(analyticsRepo)
@@ -80,13 +80,9 @@ func main() {
 		fmt.Sprintf(":%s", cfg.HTTPPort),
 		analyticsHandler,
 		cfg.JWTSecret,
-
+		cfg.ReadinessTimeout,
 		func(ctx context.Context) error {
 			return pool.Ping(ctx)
-		},
-
-		func(ctx context.Context) error {
-			return redisClient.Ping(ctx).Err()
 		},
 	)
 	if err != nil {

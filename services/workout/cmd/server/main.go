@@ -51,7 +51,7 @@ func main() {
 	}
 
 	// 4. Подключение к базе данных
-	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := database.NewPool(ctx, cfg.DatabaseURL, cfg.DatabaseConnectTimeout, cfg.DatabaseOperationTimeout)
 	if err != nil {
 		logger.Log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
@@ -63,10 +63,16 @@ func main() {
 	}
 
 	// 6. Создаём репозиторий
-	workoutRepo := postgres.NewWorkoutRepo(pool)
+	workoutRepo := postgres.NewWorkoutRepo(pool, cfg.DatabaseOperationTimeout)
 
 	redisClient := redis.NewClient(&redis.Options{
-		Addr: cfg.RedisAddr,
+		Addr:                  cfg.RedisAddr,
+		DialTimeout:           cfg.RedisDialTimeout,
+		ReadTimeout:           cfg.RedisReadTimeout,
+		WriteTimeout:          cfg.RedisWriteTimeout,
+		MaxRetries:            cfg.RedisMaxRetries,
+		DialerRetries:         cfg.RedisDialRetries,
+		ContextTimeoutEnabled: true,
 	})
 
 	if err := redisotel.InstrumentTracing(redisClient); err != nil {
@@ -82,7 +88,7 @@ func main() {
 	// 7. Создаём сервис
 	workoutService := service.NewWorkoutService(
 		workoutRepo,
-		service.WithRedis(redisClient, cfg.ExerciseCacheTTL),
+		service.WithRedis(redisClient, cfg.ExerciseCacheTTL, cfg.RedisCacheTimeout),
 	)
 
 	// 8. Создаём обработчики
@@ -93,13 +99,9 @@ func main() {
 		fmt.Sprintf(":%s", cfg.HTTPPort),
 		workoutHandler,
 		cfg.JWTSecret,
-
+		cfg.ReadinessTimeout,
 		func(ctx context.Context) error {
 			return pool.Ping(ctx)
-		},
-
-		func(ctx context.Context) error {
-			return redisClient.Ping(ctx).Err()
 		},
 	)
 

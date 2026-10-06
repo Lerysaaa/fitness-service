@@ -86,7 +86,7 @@ func createTestExercise(t *testing.T, pool *pgxpool.Pool) string {
 		Category:    "Compound",
 	}
 	// Используем репозиторий напрямую
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 5*time.Second)
 	err := repo.CreateExercise(ctx, exercise)
 	require.NoError(t, err)
 	require.NotEmpty(t, exercise.ID)
@@ -98,7 +98,7 @@ func TestCreateWorkout_Success(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 5*time.Second)
 
 	exerciseID := createTestExercise(t, pool)
 
@@ -140,7 +140,7 @@ func TestGetWorkoutByID_NotFound(t *testing.T) {
 	pool, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 5*time.Second)
 	workout, sets, err := repo.GetWorkoutByID(context.Background(), "00000000-0000-0000-0000-000000000000")
 	require.NoError(t, err)
 	require.Nil(t, workout)
@@ -152,7 +152,7 @@ func TestDeleteWorkout_Cascade(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 5*time.Second)
 
 	exerciseID := createTestExercise(t, pool)
 
@@ -190,7 +190,7 @@ func TestListWorkoutsByUser(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 5*time.Second)
 
 	exerciseID := createTestExercise(t, pool)
 
@@ -217,7 +217,7 @@ func TestUpdateWorkout(t *testing.T) {
 	defer cleanup()
 
 	ctx := context.Background()
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 5*time.Second)
 
 	exerciseID := createTestExercise(t, pool)
 
@@ -245,15 +245,31 @@ func TestListExercises(t *testing.T) {
 	pool, cleanup := setupTestDB(t)
 	defer cleanup()
 
-	repo := postgres.NewWorkoutRepo(pool)
+	repo := postgres.NewWorkoutRepo(pool, 2*time.Second)
+	ctx := context.Background()
 
-	// Создаём несколько упражнений
-	ex1 := &domain.Exercise{Name: "Squat", MuscleGroup: "Legs", Category: "Compound"}
-	ex2 := &domain.Exercise{Name: "Curl", MuscleGroup: "Arms", Category: "Isolation"}
-	require.NoError(t, repo.CreateExercise(context.Background(), ex1))
-	require.NoError(t, repo.CreateExercise(context.Background(), ex2))
-
-	exercises, err := repo.ListExercises(context.Background())
+	existingExercises, err := repo.ListExercises(ctx)
 	require.NoError(t, err)
-	require.Len(t, exercises, 2)
+
+	ex1 := &domain.Exercise{
+		Name:        "Squat",
+		MuscleGroup: "Legs",
+		Category:    "Compound",
+	}
+	ex2 := &domain.Exercise{
+		Name:        "Curl",
+		MuscleGroup: "Arms",
+		Category:    "Isolation",
+	}
+
+	require.NoError(t, repo.CreateExercise(ctx, ex1))
+	require.NoError(t, repo.CreateExercise(ctx, ex2))
+
+	exercises, err := repo.ListExercises(ctx)
+	require.NoError(t, err)
+
+	require.Len(t, exercises, len(existingExercises)+2)
+
+	require.Contains(t, exercises, *ex1)
+	require.Contains(t, exercises, *ex2)
 }

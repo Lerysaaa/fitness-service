@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"fmt"
+	"time"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -13,50 +14,95 @@ import (
 
 // AnalyticsRepo реализует интерфейс repository.AnalyticsRepository.
 type AnalyticsRepo struct {
-	pool *pgxpool.Pool
+	pool             *pgxpool.Pool
+	operationTimeout time.Duration
 }
 
 // NewAnalyticsRepo создаёт новый экземпляр AnalyticsRepo.
-func NewAnalyticsRepo(pool *pgxpool.Pool) repository.AnalyticsRepository {
-	return &AnalyticsRepo{pool: pool}
+func NewAnalyticsRepo(pool *pgxpool.Pool, operationTimeout time.Duration) repository.AnalyticsRepository {
+	return &AnalyticsRepo{
+		pool:             pool,
+		operationTimeout: operationTimeout,
+	}
 }
 
 // UpsertUserStats вставляет или обновляет агрегированную статистику пользователя.
-func (r *AnalyticsRepo) UpsertUserStats(ctx context.Context, stats *domain.UserStats) error {
+func (r *AnalyticsRepo) UpsertUserStats(
+	ctx context.Context,
+	stats *domain.UserStats,
+) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
-		INSERT INTO user_stats (user_id, total_workouts, total_volume, avg_intensity, updated_at)
-		VALUES ($1, $2, $3, $4, NOW())
+		INSERT INTO user_stats (
+			user_id,
+			total_workouts,
+			total_volume,
+			total_reps,
+			avg_intensity,
+			updated_at
+		)
+		VALUES ($1, $2, $3, $4, $5, NOW())
 		ON CONFLICT (user_id)
 		DO UPDATE SET
 			total_workouts = EXCLUDED.total_workouts,
 			total_volume = EXCLUDED.total_volume,
+			total_reps = EXCLUDED.total_reps,
 			avg_intensity = EXCLUDED.avg_intensity,
 			updated_at = NOW()
 	`
-	_, err := r.pool.Exec(ctx, query,
+
+	_, err := r.pool.Exec(
+		ctx,
+		query,
 		stats.UserID,
 		stats.TotalWorkouts,
 		stats.TotalVolume,
+		stats.TotalReps,
 		stats.AvgIntensity,
 	)
 	if err != nil {
-		return fmt.Errorf("upsert user stats: %w", err)
+		return fmt.Errorf(
+			"upsert user stats: %w",
+			err,
+		)
 	}
+
 	return nil
 }
 
 // GetUserStats возвращает статистику пользователя по ID.
-func (r *AnalyticsRepo) GetUserStats(ctx context.Context, userID string) (*domain.UserStats, error) {
+func (r *AnalyticsRepo) GetUserStats(
+	ctx context.Context,
+	userID string,
+) (*domain.UserStats, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
-		SELECT user_id, total_workouts, total_volume, avg_intensity, updated_at
+		SELECT
+			user_id,
+			total_workouts,
+			total_volume,
+			total_reps,
+			avg_intensity,
+			updated_at
 		FROM user_stats
 		WHERE user_id = $1
 	`
+
 	stats := &domain.UserStats{}
-	err := r.pool.QueryRow(ctx, query, userID).Scan(
+
+	err := r.pool.QueryRow(
+		ctx,
+		query,
+		userID,
+	).Scan(
 		&stats.UserID,
 		&stats.TotalWorkouts,
 		&stats.TotalVolume,
+		&stats.TotalReps,
 		&stats.AvgIntensity,
 		&stats.UpdatedAt,
 	)
@@ -64,13 +110,21 @@ func (r *AnalyticsRepo) GetUserStats(ctx context.Context, userID string) (*domai
 		if err == pgx.ErrNoRows {
 			return nil, nil
 		}
-		return nil, fmt.Errorf("get user stats: %w", err)
+
+		return nil, fmt.Errorf(
+			"get user stats: %w",
+			err,
+		)
 	}
+
 	return stats, nil
 }
 
 // UpsertExerciseProgress вставляет или обновляет прогресс по упражнению.
 func (r *AnalyticsRepo) UpsertExerciseProgress(ctx context.Context, progress *domain.ExerciseProgress) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		INSERT INTO exercise_progress (
 			user_id, exercise_id, best_weight, total_reps, last_workout_at, estimated_1rm, updated_at
@@ -100,6 +154,9 @@ func (r *AnalyticsRepo) UpsertExerciseProgress(ctx context.Context, progress *do
 
 // GetExerciseProgress возвращает прогресс по конкретному упражнению.
 func (r *AnalyticsRepo) GetExerciseProgress(ctx context.Context, userID, exerciseID string) (*domain.ExerciseProgress, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		SELECT user_id, exercise_id, best_weight, total_reps, last_workout_at, estimated_1rm, updated_at
 		FROM exercise_progress
@@ -126,6 +183,9 @@ func (r *AnalyticsRepo) GetExerciseProgress(ctx context.Context, userID, exercis
 
 // ListExerciseProgress возвращает прогресс по всем упражнениям пользователя.
 func (r *AnalyticsRepo) ListExerciseProgress(ctx context.Context, userID string) ([]domain.ExerciseProgress, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		SELECT user_id, exercise_id, best_weight, total_reps, last_workout_at, estimated_1rm, updated_at
 		FROM exercise_progress
@@ -159,6 +219,9 @@ func (r *AnalyticsRepo) ListExerciseProgress(ctx context.Context, userID string)
 
 // InsertWorkoutSummary вставляет сводку тренировки, игнорируя дубликаты.
 func (r *AnalyticsRepo) InsertWorkoutSummary(ctx context.Context, summary *domain.WorkoutSummary) error {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		INSERT INTO workout_summary (workout_id, user_id, name, date, total_volume, set_count, created_at)
 		VALUES ($1, $2, $3, $4, $5, $6, NOW())
@@ -180,6 +243,9 @@ func (r *AnalyticsRepo) InsertWorkoutSummary(ctx context.Context, summary *domai
 
 // ListWorkoutSummaries возвращает список сводок тренировок пользователя.
 func (r *AnalyticsRepo) ListWorkoutSummaries(ctx context.Context, userID string, limit, offset int) ([]domain.WorkoutSummary, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
 	query := `
 		SELECT workout_id, user_id, name, date, total_volume, set_count, created_at
 		FROM workout_summary
@@ -212,23 +278,243 @@ func (r *AnalyticsRepo) ListWorkoutSummaries(ctx context.Context, userID string,
 	return summaries, rows.Err()
 }
 
-// IsEventProcessed проверяет наличие события в processed_events.
-func (r *AnalyticsRepo) IsEventProcessed(ctx context.Context, eventID string) (bool, error) {
-	var exists bool
-	query := `SELECT EXISTS(SELECT 1 FROM processed_events WHERE event_id = $1)`
-	err := r.pool.QueryRow(ctx, query, eventID).Scan(&exists)
-	if err != nil {
-		return false, fmt.Errorf("check processed event: %w", err)
-	}
-	return exists, nil
+type analyticsEventTx struct {
+	tx pgx.Tx
 }
 
-// MarkEventProcessed вставляет запись об обработанном событии.
-func (r *AnalyticsRepo) MarkEventProcessed(ctx context.Context, eventID string) error {
-	query := `INSERT INTO processed_events (event_id) VALUES ($1) ON CONFLICT (event_id) DO NOTHING`
-	_, err := r.pool.Exec(ctx, query, eventID)
+// WithEventTransaction выполняет обработку события
+// и запись event_id в одной PostgreSQL-транзакции.
+func (r *AnalyticsRepo) WithEventTransaction(ctx context.Context, eventID string,
+	fn func(context.Context, repository.AnalyticsEventTx) error) (bool, error) {
+	ctx, cancel := r.operationCtx(ctx)
+	defer cancel()
+
+	tx, err := r.pool.Begin(ctx)
 	if err != nil {
-		return fmt.Errorf("mark event processed: %w", err)
+		return false, fmt.Errorf("begin event transaction: %w", err)
 	}
+
+	defer func() {
+		_ = tx.Rollback(context.Background())
+	}()
+
+	query := `
+		INSERT INTO processed_events (event_id)
+		VALUES ($1)
+		ON CONFLICT (event_id) DO NOTHING
+	`
+
+	commandTag, err := tx.Exec(
+		ctx,
+		query,
+		eventID,
+	)
+	if err != nil {
+		return false, fmt.Errorf("claim processed event: %w", err)
+	}
+
+	if commandTag.RowsAffected() == 0 {
+		return false, nil
+	}
+
+	eventTx := &analyticsEventTx{
+		tx: tx,
+	}
+
+	if err := fn(ctx, eventTx); err != nil {
+		return false, err
+	}
+
+	if err := tx.Commit(ctx); err != nil {
+		return false, fmt.Errorf("commit event transaction: %w", err)
+	}
+
+	return true, nil
+}
+
+func (t *analyticsEventTx) AccumulateUserStats(
+	ctx context.Context,
+	userID string,
+	totalVolume float64,
+	totalReps int,
+) error {
+	query := `
+		INSERT INTO user_stats (
+			user_id,
+			total_workouts,
+			total_volume,
+			total_reps,
+			avg_intensity,
+			updated_at
+		)
+		VALUES (
+			$1,
+			1,
+			$2,
+			$3,
+			CASE
+				WHEN $3 > 0
+				THEN $2 / $3::numeric
+				ELSE 0
+			END,
+			NOW()
+		)
+		ON CONFLICT (user_id)
+		DO UPDATE SET
+			total_workouts =
+				user_stats.total_workouts + 1,
+
+			total_volume =
+				user_stats.total_volume + EXCLUDED.total_volume,
+
+			total_reps =
+				user_stats.total_reps + EXCLUDED.total_reps,
+
+			avg_intensity =
+				CASE
+					WHEN user_stats.total_reps + EXCLUDED.total_reps > 0
+					THEN (
+						user_stats.total_volume +
+						EXCLUDED.total_volume
+					) / (
+						user_stats.total_reps +
+						EXCLUDED.total_reps
+					)::numeric
+					ELSE 0
+				END,
+
+			updated_at = NOW()
+	`
+
+	_, err := t.tx.Exec(
+		ctx,
+		query,
+		userID,
+		totalVolume,
+		totalReps,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"accumulate user stats in event transaction: %w",
+			err,
+		)
+	}
+
 	return nil
+}
+
+func (t *analyticsEventTx) MergeExerciseProgress(
+	ctx context.Context,
+	progress *domain.ExerciseProgress,
+) error {
+	query := `
+		INSERT INTO exercise_progress (
+			user_id,
+			exercise_id,
+			best_weight,
+			total_reps,
+			last_workout_at,
+			estimated_1rm,
+			updated_at
+		)
+		VALUES (
+			$1,
+			$2,
+			$3,
+			$4,
+			$5,
+			$6,
+			NOW()
+		)
+		ON CONFLICT (user_id, exercise_id)
+		DO UPDATE SET
+			best_weight = GREATEST(
+				exercise_progress.best_weight,
+				EXCLUDED.best_weight
+			),
+
+			total_reps =
+				exercise_progress.total_reps +
+				EXCLUDED.total_reps,
+
+			last_workout_at = GREATEST(
+				COALESCE(
+					exercise_progress.last_workout_at,
+					EXCLUDED.last_workout_at
+				),
+				EXCLUDED.last_workout_at
+			),
+
+			estimated_1rm = GREATEST(
+				exercise_progress.estimated_1rm,
+				EXCLUDED.estimated_1rm
+			),
+
+			updated_at = NOW()
+	`
+
+	_, err := t.tx.Exec(
+		ctx,
+		query,
+		progress.UserID,
+		progress.ExerciseID,
+		progress.BestWeight,
+		progress.TotalReps,
+		progress.LastWorkoutAt,
+		progress.Estimated1RM,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"merge exercise progress in event transaction: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+func (t *analyticsEventTx) InsertWorkoutSummary(
+	ctx context.Context,
+	summary *domain.WorkoutSummary,
+) error {
+	query := `
+		INSERT INTO workout_summary (
+			workout_id,
+			user_id,
+			name,
+			date,
+			total_volume,
+			set_count,
+			created_at
+		)
+		VALUES ($1, $2, $3, $4, $5, $6, NOW())
+		ON CONFLICT (workout_id) DO NOTHING
+	`
+
+	_, err := t.tx.Exec(
+		ctx,
+		query,
+		summary.WorkoutID,
+		summary.UserID,
+		summary.Name,
+		summary.Date,
+		summary.TotalVolume,
+		summary.SetCount,
+	)
+	if err != nil {
+		return fmt.Errorf(
+			"insert workout summary in event transaction: %w",
+			err,
+		)
+	}
+
+	return nil
+}
+
+func (r *AnalyticsRepo) operationCtx(ctx context.Context) (context.Context, context.CancelFunc) {
+	if r.operationTimeout <= 0 {
+		return context.WithCancel(ctx)
+	}
+
+	return context.WithTimeout(ctx, r.operationTimeout)
 }

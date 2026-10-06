@@ -44,7 +44,7 @@ func main() {
 			Msg("Failed to initialize tracing")
 	}
 
-	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
+	pool, err := database.NewPool(ctx, cfg.DatabaseURL, cfg.DatabaseConnectTimeout, cfg.DatabaseOperationTimeout)
 	if err != nil {
 		logger.Log.Fatal().Err(err).Msg("Failed to connect to database")
 	}
@@ -54,7 +54,7 @@ func main() {
 		logger.Log.Fatal().Err(err).Msg("Failed to run migrations")
 	}
 
-	plannerRepo := postgres.NewPlannerRepo(pool)
+	plannerRepo := postgres.NewPlannerRepo(pool, cfg.DatabaseOperationTimeout)
 	plannerService := service.NewPlannerService(plannerRepo)
 	plannerHandler := handler.NewPlannerHandler(plannerService)
 
@@ -68,13 +68,9 @@ func main() {
 		fmt.Sprintf(":%s", cfg.HTTPPort),
 		plannerHandler,
 		cfg.JWTSecret,
-
+		cfg.ReadinessTimeout,
 		func(ctx context.Context) error {
 			return pool.Ping(ctx)
-		},
-
-		func(ctx context.Context) error {
-			return redisClient.Ping(ctx).Err()
 		},
 	)
 
