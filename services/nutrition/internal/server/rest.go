@@ -17,6 +17,7 @@ import (
 
 func RunREST(
 	addr string,
+	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
 ) (func(context.Context) error, error) {
 	r := chi.NewRouter()
@@ -25,13 +26,21 @@ func RunREST(
 
 	r.Use(chimiddleware.RequestID)
 	r.Use(chimiddleware.RealIP)
+
 	r.Use(middleware.HTTPTracing("nutrition"))
-	r.Use(chimiddleware.Logger)
+	r.Use(middleware.HTTPLogging)
 	r.Use(middleware.HTTPMetrics(httpMetrics))
+
 	r.Use(chimiddleware.Recoverer)
 
 	r.Get("/health/live", liveHandler)
-	r.Get("/health/ready", readyHandler(readinessChecks...))
+	r.Get(
+		"/health/ready",
+		readyHandler(
+			readinessTimeout,
+			readinessChecks...,
+		),
+	)
 
 	r.Handle(
 		"/metrics",

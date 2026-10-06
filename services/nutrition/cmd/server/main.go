@@ -17,8 +17,10 @@ import (
 )
 
 func main() {
+	// 1. Инициализация логгера
 	logger.Init("nutrition", "info")
 
+	// 2. Загрузка конфигурации
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Log.Fatal().
@@ -26,9 +28,11 @@ func main() {
 			Msg("Failed to load config")
 	}
 
+	// 3. Корневой контекст
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
+	// 4. Инициализация трассировки
 	tracingShutdown, err := tracing.Init(
 		ctx,
 		"nutrition",
@@ -40,20 +44,38 @@ func main() {
 			Msg("Failed to initialize tracing")
 	}
 
-	pool, err := database.NewPool(ctx, cfg.DatabaseURL)
+	// 4. Подключение к базе данных
+	pool, err := database.NewPool(
+		ctx,
+		cfg.DatabaseURL,
+		cfg.DatabaseConnectTimeout,
+		cfg.DatabaseOperationTimeout,
+	)
+
+	if err != nil {
+		logger.Log.Fatal().
+			Err(err).
+			Msg("Failed to connect to database")
+	}
+	defer pool.Close()
+
+	// 6. Применяем миграции
 	if err := runMigrations(cfg.DatabaseURL); err != nil {
 		logger.Log.Fatal().
 			Err(err).
 			Msg("Failed to run migrations")
 	}
 
+	// 7. Запускаем HTTP-сервер
 	httpShutdown, err := server.RunREST(
 		fmt.Sprintf(":%s", cfg.HTTPPort),
+		cfg.ReadinessTimeout,
 
 		func(ctx context.Context) error {
 			return pool.Ping(ctx)
 		},
 	)
+
 	if err != nil {
 		logger.Log.Fatal().
 			Err(err).
