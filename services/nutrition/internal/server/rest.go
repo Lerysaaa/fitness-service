@@ -16,13 +16,14 @@ import (
 	"fitness-platform/services/nutrition/internal/handler"
 )
 
-func RunREST(
-	addr string,
+// NewRouter создаёт HTTP-маршруты Nutrition Service.
+// Используется и приложением, и тестами.
+func NewRouter(
 	nutritionHandler *handler.NutritionHandler,
 	jwtSecret string,
 	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
-) (func(context.Context) error, error) {
+) http.Handler {
 	r := chi.NewRouter()
 
 	registry, httpMetrics := appmetrics.NewServiceRegistry()
@@ -33,16 +34,13 @@ func RunREST(
 	r.Use(middleware.HTTPTracing("nutrition"))
 	r.Use(middleware.HTTPLogging)
 	r.Use(middleware.HTTPMetrics(httpMetrics))
-
 	r.Use(chimiddleware.Recoverer)
 
 	r.Get("/health/live", liveHandler)
+
 	r.Get(
 		"/health/ready",
-		readyHandler(
-			readinessTimeout,
-			readinessChecks...,
-		),
+		readyHandler(readinessTimeout, readinessChecks...),
 	)
 
 	r.Handle(
@@ -53,6 +51,7 @@ func RunREST(
 		),
 	)
 
+	// Защищённые маршруты.
 	r.Group(func(r chi.Router) {
 		r.Use(middleware.JWTAuth(jwtSecret))
 
@@ -67,9 +66,28 @@ func RunREST(
 		)
 	})
 
+	return r
+}
+
+// RunREST запускает HTTP-сервер.
+func RunREST(
+	addr string,
+	nutritionHandler *handler.NutritionHandler,
+	jwtSecret string,
+	readinessTimeout time.Duration,
+	readinessChecks ...ReadinessCheck,
+) (func(context.Context) error, error) {
+
+	router := NewRouter(
+		nutritionHandler,
+		jwtSecret,
+		readinessTimeout,
+		readinessChecks...,
+	)
+
 	srv := &http.Server{
 		Addr:         addr,
-		Handler:      r,
+		Handler:      router,
 		ReadTimeout:  10 * time.Second,
 		WriteTimeout: 10 * time.Second,
 		IdleTimeout:  60 * time.Second,
