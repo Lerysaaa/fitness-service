@@ -38,12 +38,13 @@ func (r *NutritionRepo) UpsertProfile(
 		INSERT INTO nutrition_profiles (
 			user_id,
 			age,
+			sex,
 			height_cm,
 			weight_kg,
 			activity_level,
 			goal
 		)
-		VALUES($1, $2, $3, $4, $5, $6, $7)
+		VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (user_id)
 		DO UPDATE SET
 			age = EXCLUDED.age,
@@ -93,7 +94,7 @@ func (r *NutritionRepo) GetProfile(
 			activity_level,
 			goal,
 			created_at,
-			updates_at
+			updated_at
 		FROM nutrition_profiles
 		WHERE user_id = $1
 	`

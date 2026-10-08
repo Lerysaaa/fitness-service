@@ -13,10 +13,13 @@ import (
 	"fitness-platform/pkg/logger"
 	appmetrics "fitness-platform/pkg/metrics"
 	"fitness-platform/pkg/middleware"
+	"fitness-platform/services/nutrition/internal/handler"
 )
 
 func RunREST(
 	addr string,
+	nutritionHandler *handler.NutritionHandler,
+	jwtSecret string,
 	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
 ) (func(context.Context) error, error) {
@@ -49,6 +52,20 @@ func RunREST(
 			promhttp.HandlerOpts{},
 		),
 	)
+
+	r.Group(func(r chi.Router) {
+		r.Use(middleware.JWTAuth(jwtSecret))
+
+		r.Post(
+			"/nutrition/profile",
+			nutritionHandler.UpsertProfile,
+		)
+
+		r.Get(
+			"/nutrition/profile",
+			nutritionHandler.GetProfile,
+		)
+	})
 
 	srv := &http.Server{
 		Addr:         addr,

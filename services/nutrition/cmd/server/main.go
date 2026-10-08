@@ -14,6 +14,10 @@ import (
 	"fitness-platform/pkg/tracing"
 	"fitness-platform/services/nutrition/internal/database"
 	"fitness-platform/services/nutrition/internal/server"
+
+	"fitness-platform/services/nutrition/internal/handler"
+	postgresrepo "fitness-platform/services/nutrition/internal/repository/postgres"
+	"fitness-platform/services/nutrition/internal/service"
 )
 
 func main() {
@@ -66,11 +70,28 @@ func main() {
 			Msg("Failed to run migrations")
 	}
 
+	// 7. Создаём repository
+	nutritionRepo := postgresrepo.NewNutritionRepo(
+		pool,
+		cfg.DatabaseOperationTimeout,
+	)
+
+	// 8. Создаём service
+	nutritionService := service.NewNutritionService(
+		nutritionRepo,
+	)
+
+	// 9. Создаём HTTP-handler
+	nutritionHandler := handler.NewNutritionHandler(
+		nutritionService,
+	)
+
 	// 7. Запускаем HTTP-сервер
 	httpShutdown, err := server.RunREST(
 		fmt.Sprintf(":%s", cfg.HTTPPort),
+		nutritionHandler,
+		cfg.JWTSecret,
 		cfg.ReadinessTimeout,
-
 		func(ctx context.Context) error {
 			return pool.Ping(ctx)
 		},
