@@ -51,10 +51,8 @@ func validateProfile(
 		return ErrInvalidInput
 	}
 
-	switch profile.ActivityLevel {
-	case "sedentary", "light", "moderate", "high", "very_high":
-	default:
-		return ErrInvalidInput
+	if _, err := activityMultiplier(profile.ActivityLevel); err != nil {
+		return err
 	}
 
 	switch profile.Goal {
