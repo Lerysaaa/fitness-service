@@ -6,8 +6,10 @@ import (
 	"fitness-platform/services/nutrition/internal/domain"
 )
 
-func validateProfile(profile *domain.NutritionProfile) error {
-	if profile == nil || profile.UserID == "" {
+func validateBodyMeasurements(
+	profile *domain.NutritionProfile,
+) error {
+	if profile == nil {
 		return ErrInvalidInput
 	}
 
@@ -32,6 +34,20 @@ func validateProfile(profile *domain.NutritionProfile) error {
 	switch profile.Sex {
 	case "male", "female":
 	default:
+		return ErrInvalidInput
+	}
+
+	return nil
+}
+
+func validateProfile(
+	profile *domain.NutritionProfile,
+) error {
+	if err := validateBodyMeasurements(profile); err != nil {
+		return err
+	}
+
+	if profile.UserID == "" {
 		return ErrInvalidInput
 	}
 
