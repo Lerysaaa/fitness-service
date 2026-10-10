@@ -286,6 +286,34 @@ func TestNutritionProfileHTTP(t *testing.T) {
 
 		checkStatus(t, status, http.StatusBadRequest, body)
 
+		// Тест 7. Некорректая цель питания не проходит
+		t.Run("invalid goal", func(t *testing.T) {
+			badBody := `{
+			"age": 20,
+			"sex": "female",
+			"height_cm": 168,
+			"weight_kg": 60,
+			"activity_level": "moderate",
+			"goal": "pizza"
+		}`
+
+			status, body := sendProfileRequest(
+				t,
+				client,
+				httpServer.URL,
+				http.MethodPost,
+				tokenA,
+				badBody,
+			)
+
+			checkStatus(
+				t,
+				status,
+				http.StatusBadRequest,
+				body,
+			)
+		})
+
 		// Некорректный POST не должен менять вес.
 		status, body = sendProfileRequest(
 			t, client, httpServer.URL,

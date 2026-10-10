@@ -1,0 +1,51 @@
+package service
+
+import (
+	"math"
+
+	"fitness-platform/services/nutrition/internal/domain"
+)
+
+func validateProfile(profile *domain.NutritionProfile) error {
+	if profile == nil || profile.UserID == "" {
+		return ErrInvalidInput
+	}
+
+	if profile.Age < 18 || profile.Age > 120 {
+		return ErrInvalidInput
+	}
+
+	if math.IsNaN(profile.HeightCm) ||
+		math.IsInf(profile.HeightCm, 0) ||
+		profile.HeightCm < 100 ||
+		profile.HeightCm > 250 {
+		return ErrInvalidInput
+	}
+
+	if math.IsNaN(profile.WeightKg) ||
+		math.IsInf(profile.WeightKg, 0) ||
+		profile.WeightKg < 20 ||
+		profile.WeightKg > 400 {
+		return ErrInvalidInput
+	}
+
+	switch profile.Sex {
+	case "male", "female":
+	default:
+		return ErrInvalidInput
+	}
+
+	switch profile.ActivityLevel {
+	case "sedentary", "light", "moderate", "high", "very_high":
+	default:
+		return ErrInvalidInput
+	}
+
+	switch profile.Goal {
+	case "lose", "maintain", "gain":
+	default:
+		return ErrInvalidInput
+	}
+
+	return nil
+}

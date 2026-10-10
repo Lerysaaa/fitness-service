@@ -40,15 +40,8 @@ func (s *NutritionService) UpsertProfile(
 	)
 	defer span.End()
 
-	if profile == nil ||
-		profile.UserID == "" ||
-		profile.Age <= 0 ||
-		profile.HeightCm <= 0 ||
-		profile.WeightKg <= 0 ||
-		profile.Sex == "" ||
-		profile.ActivityLevel == "" ||
-		profile.Goal == "" {
-		return nil, ErrInvalidInput
+	if err := validateProfile(profile); err != nil {
+		return nil, err
 	}
 
 	if err := s.repo.UpsertProfile(ctx, profile); err != nil {
