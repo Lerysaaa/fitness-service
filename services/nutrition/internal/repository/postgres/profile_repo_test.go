@@ -250,6 +250,13 @@ func TestNutritionRepositoryIntegration(t *testing.T) {
 			t.Fatal("expected nil profile")
 		}
 	})
+
+	// Проверяем новую таблицу foods на той же тестовой PostgreSQL.
+	// Так миграции и ограничения тестируются без второго контейнера.
+	t.Run("foods schema", func(t *testing.T) {
+		testFoodsSchema(t, ctx, pool)
+	})
+
 }
 
 // Создаём тестовый профиль.
