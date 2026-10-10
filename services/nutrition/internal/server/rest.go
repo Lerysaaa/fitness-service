@@ -64,6 +64,11 @@ func NewRouter(
 			"/nutrition/profile",
 			nutritionHandler.GetProfile,
 		)
+
+		r.Get(
+			"/nutrition/targets",
+			nutritionHandler.GetTargets,
+		)
 	})
 
 	return r

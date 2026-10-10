@@ -98,3 +98,20 @@ func (s *NutritionService) GetProfile(
 
 	return profile, nil
 }
+
+// GetTargets рассчитывает текущие дневные нормы питания пользователя.
+func (s *NutritionService) GetTargets(
+	ctx context.Context,
+	userID string,
+) (*NutritionTargets, error) {
+	profile, err := s.GetProfile(ctx, userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if profile == nil {
+		return nil, nil
+	}
+
+	return CalculateTargets(profile)
+}

@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"math"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -381,6 +382,121 @@ func TestNutritionProfileHTTP(t *testing.T) {
 			t.Fatal("user A profile was changed by user B")
 		}
 	})
+
+	t.Run("targets without JWT", func(t *testing.T) {
+		status, body := sendTargetsRequest(
+			t, client, httpServer.URL, "",
+		)
+
+		checkStatus(
+			t,
+			status,
+			http.StatusUnauthorized,
+			body,
+		)
+	})
+
+	t.Run("targets without profile", func(t *testing.T) {
+		tokenC := makeTestJWT(
+			t,
+			"550e8400-e29b-41d4-a716-446655440003",
+		)
+
+		status, body := sendTargetsRequest(
+			t, client, httpServer.URL, tokenC,
+		)
+
+		checkStatus(
+			t,
+			status,
+			http.StatusNotFound,
+			body,
+		)
+	})
+
+	t.Run("targets for user A", func(t *testing.T) {
+		status, body := sendTargetsRequest(
+			t, client, httpServer.URL, tokenA,
+		)
+
+		checkStatus(
+			t,
+			status,
+			http.StatusOK,
+			body,
+		)
+
+		var targets service.NutritionTargets
+		if err := json.Unmarshal(body, &targets); err != nil {
+			t.Fatalf("decode targets: %v", err)
+		}
+
+		// В предыдущем сценарии пользователь A
+		// обновил вес с 60 до 58.5 кг.
+		// Поэтому BMR и TDEE должны пересчитаться.
+		if math.Abs(targets.BMR-1374) > 0.000001 {
+			t.Fatalf("unexpected BMR: %v", targets.BMR)
+		}
+
+		if math.Abs(targets.TDEE-2129.7) > 0.000001 {
+			t.Fatalf("unexpected TDEE: %v", targets.TDEE)
+		}
+
+		if math.Abs(targets.DailyCalories-2129.7) > 0.000001 {
+			t.Fatalf(
+				"unexpected daily calories: %v",
+				targets.DailyCalories,
+			)
+		}
+
+		// Проверяем, что количество калорий,
+		// рассчитанное по БЖУ, совпадает с целью.
+		totalCalories :=
+			targets.ProteinGrams*4 +
+				targets.FatGrams*9 +
+				targets.CarbsGrams*4
+
+		if math.Abs(totalCalories-targets.DailyCalories) > 0.000001 {
+			t.Fatal("macros do not match daily calories")
+		}
+	})
+
+	t.Run("targets for user B", func(t *testing.T) {
+		status, body := sendTargetsRequest(
+			t, client, httpServer.URL, tokenB,
+		)
+
+		checkStatus(
+			t,
+			status,
+			http.StatusOK,
+			body,
+		)
+
+		var targets service.NutritionTargets
+		if err := json.Unmarshal(body, &targets); err != nil {
+			t.Fatalf("decode targets: %v", err)
+		}
+
+		// Пользователь B имеет другой профиль:
+		// male, 25 лет, 180 см, 80 кг, high.
+		// Проверяем, что расчёт выполнен по его данным.
+		if math.Abs(targets.BMR-1805) > 0.000001 {
+			t.Fatalf("unexpected BMR: %v", targets.BMR)
+		}
+
+		if math.Abs(targets.TDEE-3113.625) > 0.000001 {
+			t.Fatalf("unexpected TDEE: %v", targets.TDEE)
+		}
+
+		if math.Abs(targets.DailyCalories-3113.625) > 0.000001 {
+			t.Fatalf(
+				"unexpected daily calories: %v",
+				targets.DailyCalories,
+			)
+		}
+	})
+
 }
 
 // Создаёт JWT с указанным userID.
@@ -486,4 +602,44 @@ func decodeProfile(
 	}
 
 	return profile
+}
+
+// sendTargetsRequest отправляет GET-запрос к API дневных норм.
+// Используется только в HTTP-тестах.
+func sendTargetsRequest(
+	t *testing.T,
+	client *http.Client,
+	baseURL string,
+	token string,
+) (int, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(
+		http.MethodGet,
+		baseURL+"/nutrition/targets",
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create HTTP request: %v", err)
+	}
+
+	if token != "" {
+		req.Header.Set(
+			"Authorization",
+			"Bearer "+token,
+		)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("send HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read response body: %v", err)
+	}
+
+	return resp.StatusCode, body
 }

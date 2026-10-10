@@ -154,6 +154,67 @@ func (h *NutritionHandler) GetProfile(
 	)
 }
 
+// GetTargets возвращает рассчитанные нормы питания пользователя.
+func (h *NutritionHandler) GetTargets(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID := middleware.GetUserID(r.Context())
+
+	if userID == "" {
+		writeError(
+			w,
+			http.StatusUnauthorized,
+			"user not authenticated",
+		)
+		return
+	}
+
+	targets, err := h.nutritionService.GetTargets(
+		r.Context(),
+		userID,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(
+				w,
+				http.StatusBadRequest,
+				"invalid profile data",
+			)
+			return
+		}
+
+		logger.FromContext(r.Context()).
+			Error().
+			Err(err).
+			Msg("failed to calculate nutrition targets")
+
+		writeError(
+			w,
+			http.StatusInternalServerError,
+			"internal server error",
+		)
+		return
+	}
+
+	// Отсутствие профиля — ожидаемый сценарий,
+	// а не внутренняя ошибка сервера.
+	if targets == nil {
+		writeError(
+			w,
+			http.StatusNotFound,
+			"profile not found",
+		)
+		return
+	}
+
+	writeJSON(
+		w,
+		http.StatusOK,
+		targets,
+	)
+}
+
 func writeJSON(
 	w http.ResponseWriter,
 	status int,

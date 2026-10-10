@@ -3,6 +3,7 @@ package service
 import (
 	"context"
 	"errors"
+	"math"
 	"testing"
 
 	"fitness-platform/services/nutrition/internal/domain"
@@ -14,6 +15,7 @@ type fakeNutritionRepository struct {
 	upsertCalled bool
 	getCalled    bool
 	saveError    error
+	getError     error
 }
 
 // Имитируем сохранение профиля в базу.
@@ -37,6 +39,11 @@ func (f *fakeNutritionRepository) GetProfile(
 	userID string,
 ) (*domain.NutritionProfile, error) {
 	f.getCalled = true
+
+	// Позволяем тестам имитировать ошибку PostgreSQL.
+	if f.getError != nil {
+		return nil, f.getError
+	}
 
 	if f.profile == nil || f.profile.UserID != userID {
 		return nil, nil
@@ -148,5 +155,109 @@ func TestGetProfileNotFound(t *testing.T) {
 
 	if profile != nil {
 		t.Fatal("expected nil profile")
+	}
+}
+
+func TestGetTargetsSuccess(t *testing.T) {
+	profile := validTestProfile()
+
+	repo := &fakeNutritionRepository{
+		profile: profile,
+	}
+	svc := NewNutritionService(repo)
+
+	got, err := svc.GetTargets(
+		context.Background(),
+		profile.UserID,
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got == nil {
+		t.Fatal("expected nutrition targets")
+	}
+
+	if math.Abs(got.BMR-1389) > 0.000001 {
+		t.Fatalf("unexpected BMR: %v", got.BMR)
+	}
+
+	if math.Abs(got.TDEE-2152.95) > 0.000001 {
+		t.Fatalf("unexpected TDEE: %v", got.TDEE)
+	}
+
+	if math.Abs(got.DailyCalories-2152.95) > 0.000001 {
+		t.Fatalf(
+			"unexpected calories: %v",
+			got.DailyCalories,
+		)
+	}
+
+	// GET не должен изменять сохранённый профиль.
+	if !repo.getCalled {
+		t.Fatal("repository GetProfile was not called")
+	}
+
+	if repo.upsertCalled {
+		t.Fatal("GetTargets must not update profile")
+	}
+}
+
+func TestGetTargetsNotFound(t *testing.T) {
+	repo := &fakeNutritionRepository{}
+	svc := NewNutritionService(repo)
+
+	got, err := svc.GetTargets(
+		context.Background(),
+		"550e8400-e29b-41d4-a716-446655440000",
+	)
+	if err != nil {
+		t.Fatalf("unexpected error: %v", err)
+	}
+
+	if got != nil {
+		t.Fatal("expected nil targets")
+	}
+}
+
+func TestGetTargetsInvalidUserID(t *testing.T) {
+	repo := &fakeNutritionRepository{}
+	svc := NewNutritionService(repo)
+
+	_, err := svc.GetTargets(
+		context.Background(),
+		"",
+	)
+
+	if !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf(
+			"expected ErrInvalidInput, got %v",
+			err,
+		)
+	}
+
+	if repo.getCalled {
+		t.Fatal("repository must not be called")
+	}
+}
+
+func TestGetTargetsRepositoryError(t *testing.T) {
+	dbErr := errors.New("database unavailable")
+
+	repo := &fakeNutritionRepository{
+		getError: dbErr,
+	}
+	svc := NewNutritionService(repo)
+
+	_, err := svc.GetTargets(
+		context.Background(),
+		"550e8400-e29b-41d4-a716-446655440000",
+	)
+
+	if !errors.Is(err, dbErr) {
+		t.Fatalf(
+			"expected database error, got %v",
+			err,
+		)
 	}
 }
