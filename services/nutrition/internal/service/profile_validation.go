@@ -55,10 +55,8 @@ func validateProfile(
 		return err
 	}
 
-	switch profile.Goal {
-	case "lose", "maintain", "gain":
-	default:
-		return ErrInvalidInput
+	if _, err := goalMultiplier(profile.Goal); err != nil {
+		return err
 	}
 
 	return nil
