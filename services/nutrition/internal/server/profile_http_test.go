@@ -2,7 +2,6 @@ package server
 
 import (
 	"encoding/json"
-	"io"
 	"math"
 	"net/http"
 	"strings"
@@ -422,43 +421,7 @@ func sendProfileRequest(
 	token string,
 	body string,
 ) (int, []byte) {
-	t.Helper()
-
-	req, err := http.NewRequest(
-		method,
-		baseURL+"/nutrition/profile",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		t.Fatalf("create HTTP request: %v", err)
-	}
-
-	if body != "" {
-		req.Header.Set(
-			"Content-Type",
-			"application/json",
-		)
-	}
-
-	if token != "" {
-		req.Header.Set(
-			"Authorization",
-			"Bearer "+token,
-		)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("send HTTP request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read HTTP response: %v", err)
-	}
-
-	return resp.StatusCode, responseBody
+	return sendTestRequest(t, client, baseURL, method, "/nutrition/profile", token, body)
 }
 
 // Превращает JSON-ответ обратно в Go-структуру.
@@ -485,34 +448,5 @@ func sendTargetsRequest(
 	baseURL string,
 	token string,
 ) (int, []byte) {
-	t.Helper()
-
-	req, err := http.NewRequest(
-		http.MethodGet,
-		baseURL+"/nutrition/targets",
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("create HTTP request: %v", err)
-	}
-
-	if token != "" {
-		req.Header.Set(
-			"Authorization",
-			"Bearer "+token,
-		)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("send HTTP request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read response body: %v", err)
-	}
-
-	return resp.StatusCode, body
+	return sendTestRequest(t, client, baseURL, http.MethodGet, "/nutrition/targets", token, "")
 }
