@@ -61,6 +61,12 @@ func (h *FoodHandler) CreateFood(
 
 	var extra any
 	if err := decoder.Decode(&extra); err != io.EOF {
+		var sizeErr *http.MaxBytesError
+		if errors.As(err, &sizeErr) {
+			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+			return
+		}
+
 		writeError(w, http.StatusBadRequest, "invalid JSON body")
 		return
 	}
