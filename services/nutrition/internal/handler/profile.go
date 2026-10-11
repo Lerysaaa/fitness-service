@@ -1,7 +1,6 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
 	"net/http"
 
@@ -24,6 +23,7 @@ func NewNutritionHandler(
 }
 
 type upsertProfileRequest struct {
+	UserID        string  `json:"user_id"` // Игнорируем: владелец определяется по JWT.
 	Age           int     `json:"age"`
 	Sex           string  `json:"sex"`
 	HeightCm      float64 `json:"height_cm"`
@@ -48,16 +48,9 @@ func (h *NutritionHandler) UpsertProfile(
 	}
 
 	var req upsertProfileRequest
-
-	if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-		writeError(
-			w,
-			http.StatusBadRequest,
-			"invalid JSON body",
-		)
+	if !decodeJSONRequest(w, r, &req) {
 		return
 	}
-	defer r.Body.Close()
 
 	profile := &domain.NutritionProfile{
 		UserID:        userID,
@@ -125,6 +118,11 @@ func (h *NutritionHandler) GetProfile(
 		userID,
 	)
 	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid user ID")
+			return
+		}
+
 		logger.FromContext(r.Context()).
 			Error().
 			Err(err).
