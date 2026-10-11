@@ -44,7 +44,15 @@ func (s *NutritionService) UpsertProfile(
 		return nil, err
 	}
 
-	if err := s.repo.UpsertProfile(ctx, profile); err != nil {
+	normalizedID, err := normalizeUUID(profile.UserID)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedProfile := *profile
+	normalizedProfile.UserID = normalizedID
+
+	if err := s.repo.UpsertProfile(ctx, &normalizedProfile); err != nil {
 		logger.FromContext(ctx).
 			Error().
 			Err(err).
@@ -56,7 +64,7 @@ func (s *NutritionService) UpsertProfile(
 
 	savedProfile, err := s.repo.GetProfile(
 		ctx,
-		profile.UserID,
+		normalizedID,
 	)
 	if err != nil {
 		logger.FromContext(ctx).
@@ -81,11 +89,12 @@ func (s *NutritionService) GetProfile(
 	)
 	defer span.End()
 
-	if userID == "" {
-		return nil, ErrInvalidInput
+	normalizedID, err := normalizeUUID(userID)
+	if err != nil {
+		return nil, err
 	}
 
-	profile, err := s.repo.GetProfile(ctx, userID)
+	profile, err := s.repo.GetProfile(ctx, normalizedID)
 	if err != nil {
 		logger.FromContext(ctx).
 			Error().
