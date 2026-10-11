@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 
 	"fitness-platform/services/nutrition/internal/domain"
@@ -179,13 +180,13 @@ func TestCreateFoodInvalidInput(t *testing.T) {
 		{
 			name: "name too long",
 			change: func(f *domain.Food) {
-				f.Name = stringRepeat("a", 201)
+				f.Name = strings.Repeat("a", 201)
 			},
 		},
 		{
 			name: "brand too long",
 			change: func(f *domain.Food) {
-				f.Brand = stringRepeat("b", 121)
+				f.Brand = strings.Repeat("b", 121)
 			},
 		},
 		{
@@ -234,6 +235,22 @@ func TestCreateFoodInvalidInput(t *testing.T) {
 			name: "too many decimals",
 			change: func(f *domain.Food) {
 				f.FatPer100g = 3.123
+			},
+		},
+		{
+			name: "total macros exceed 100 grams",
+			change: func(f *domain.Food) {
+				f.ProteinPer100g = 80
+				f.FatPer100g = 80
+				f.CarbsPer100g = 80
+			},
+		},
+		{
+			name: "macros exceed rounding allowance",
+			change: func(f *domain.Food) {
+				f.ProteinPer100g = 40
+				f.FatPer100g = 40
+				f.CarbsPer100g = 20.2
 			},
 		},
 	}
@@ -525,10 +542,87 @@ func TestFoodServiceRepositoryError(t *testing.T) {
 	}
 }
 
-func stringRepeat(value string, count int) string {
-	result := ""
-	for i := 0; i < count; i++ {
-		result += value
+func TestFoodServiceUUIDNormalization(t *testing.T) {
+	ctx := context.Background()
+
+	repo := &fakeFoodRepository{}
+	svc := NewFoodService(repo)
+
+	userID := "urn:uuid:" + testFoodUserID
+	foodID := "urn:uuid:" + testFoodID
+
+	// При создании владелец должен быть нормализован.
+	created, err := svc.CreateFood(
+		ctx,
+		userID,
+		validTestFood(),
+	)
+	if err != nil {
+		t.Fatalf("create food: %v", err)
 	}
-	return result
+
+	if created.OwnerUserID != testFoodUserID {
+		t.Fatal("user ID was not normalized")
+	}
+
+	// Поиск должен использовать стандартный UUID продукта.
+	found, err := svc.GetFood(ctx, userID, foodID)
+	if err != nil || found == nil {
+		t.Fatalf("get food: %v", err)
+	}
+
+	if repo.lastUserID != testFoodUserID {
+		t.Fatal("repository received non-canonical user ID")
+	}
+
+	// Список тоже должен принимать нормализованный ID.
+	_, err = svc.ListFoods(ctx, userID, 20, 0)
+	if err != nil {
+		t.Fatalf("list foods: %v", err)
+	}
+
+	if repo.lastUserID != testFoodUserID {
+		t.Fatal("list received non-canonical user ID")
+	}
+
+	// Обновление использует тот же формат идентификаторов.
+	updated, err := svc.UpdateFood(
+		ctx,
+		userID,
+		foodID,
+		validTestFood(),
+	)
+	if err != nil || updated == nil {
+		t.Fatalf("update food: %v", err)
+	}
+
+	// Удаление тоже не должно зависеть от формы записи UUID.
+	deleted, err := svc.DeleteFood(ctx, userID, foodID)
+	if err != nil || !deleted {
+		t.Fatalf("delete food: %v", err)
+	}
+}
+
+func TestCreateFoodAllowsLabelRounding(t *testing.T) {
+	repo := &fakeFoodRepository{}
+	svc := NewFoodService(repo)
+
+	food := validTestFood()
+	food.ProteinPer100g = 33.35
+	food.FatPer100g = 33.35
+	food.CarbsPer100g = 33.35
+
+	// Сумма 100.05 г допустима с небольшим допуском.
+	_, err := svc.CreateFood(
+		context.Background(),
+		testFoodUserID,
+		food,
+	)
+	if err != nil {
+		t.Fatalf("expected valid food, got %v", err)
+	}
+
+	if !repo.called {
+		t.Fatal("repository was not called")
+	}
 }

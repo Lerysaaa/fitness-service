@@ -11,7 +11,7 @@ import (
 	"fitness-platform/services/nutrition/internal/domain"
 )
 
-// FoodRepository описывает операции с каталогом, необходимые FoodService.
+// FoodRepository описывает операции с продуктами, необходимые FoodService.
 type FoodRepository interface {
 	CreatePersonalFood(
 		ctx context.Context,
@@ -54,14 +54,15 @@ func NewFoodService(repo FoodRepository) *FoodService {
 	return &FoodService{repo: repo}
 }
 
-// CreateFood создаёт личный продукт авторизованного пользователя.
+// CreateFood проверяет данные и создаёт личный продукт пользователя.
 func (s *FoodService) CreateFood(
 	ctx context.Context,
 	userID string,
 	food *domain.Food,
 ) (*domain.Food, error) {
-	if !validUUID(userID) {
-		return nil, ErrInvalidInput
+	normalizedUserID, err := normalizeUUID(userID)
+	if err != nil {
+		return nil, err
 	}
 
 	normalized, err := normalizeFood(food)
@@ -69,7 +70,11 @@ func (s *FoodService) CreateFood(
 		return nil, err
 	}
 
-	return s.repo.CreatePersonalFood(ctx, userID, normalized)
+	return s.repo.CreatePersonalFood(
+		ctx,
+		normalizedUserID,
+		normalized,
+	)
 }
 
 // GetFood возвращает общий или собственный продукт.
@@ -78,39 +83,62 @@ func (s *FoodService) GetFood(
 	userID string,
 	foodID string,
 ) (*domain.Food, error) {
-	if !validUUID(userID) || !validUUID(foodID) {
-		return nil, ErrInvalidInput
+	normalizedUserID, err := normalizeUUID(userID)
+	if err != nil {
+		return nil, err
 	}
 
-	return s.repo.GetVisibleFood(ctx, userID, foodID)
+	normalizedFoodID, err := normalizeUUID(foodID)
+	if err != nil {
+		return nil, err
+	}
+
+	return s.repo.GetVisibleFood(
+		ctx,
+		normalizedUserID,
+		normalizedFoodID,
+	)
 }
 
-// ListFoods возвращает доступные продукты с пагинацией.
+// ListFoods возвращает доступные пользователю продукты постранично.
 func (s *FoodService) ListFoods(
 	ctx context.Context,
 	userID string,
 	limit int,
 	offset int,
 ) ([]domain.Food, error) {
-	if !validUUID(userID) ||
-		limit < 1 ||
-		limit > 100 ||
-		offset < 0 {
+	normalizedUserID, err := normalizeUUID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	if limit < 1 || limit > 100 || offset < 0 {
 		return nil, ErrInvalidInput
 	}
 
-	return s.repo.ListVisibleFoods(ctx, userID, limit, offset)
+	return s.repo.ListVisibleFoods(
+		ctx,
+		normalizedUserID,
+		limit,
+		offset,
+	)
 }
 
-// UpdateFood изменяет личный продукт пользователя.
+// UpdateFood проверяет данные и изменяет личный продукт.
 func (s *FoodService) UpdateFood(
 	ctx context.Context,
 	userID string,
 	foodID string,
 	food *domain.Food,
 ) (*domain.Food, error) {
-	if !validUUID(userID) || !validUUID(foodID) {
-		return nil, ErrInvalidInput
+	normalizedUserID, err := normalizeUUID(userID)
+	if err != nil {
+		return nil, err
+	}
+
+	normalizedFoodID, err := normalizeUUID(foodID)
+	if err != nil {
+		return nil, err
 	}
 
 	normalized, err := normalizeFood(food)
@@ -120,8 +148,8 @@ func (s *FoodService) UpdateFood(
 
 	return s.repo.UpdatePersonalFood(
 		ctx,
-		userID,
-		foodID,
+		normalizedUserID,
+		normalizedFoodID,
 		normalized,
 	)
 }
@@ -132,14 +160,24 @@ func (s *FoodService) DeleteFood(
 	userID string,
 	foodID string,
 ) (bool, error) {
-	if !validUUID(userID) || !validUUID(foodID) {
-		return false, ErrInvalidInput
+	normalizedUserID, err := normalizeUUID(userID)
+	if err != nil {
+		return false, err
 	}
 
-	return s.repo.DeletePersonalFood(ctx, userID, foodID)
+	normalizedFoodID, err := normalizeUUID(foodID)
+	if err != nil {
+		return false, err
+	}
+
+	return s.repo.DeletePersonalFood(
+		ctx,
+		normalizedUserID,
+		normalizedFoodID,
+	)
 }
 
-// normalizeFood проверяет продукт и нормализует его название и бренд.
+// normalizeFood проверяет название, бренд и пищевую ценность продукта.
 func normalizeFood(food *domain.Food) (*domain.Food, error) {
 	if food == nil {
 		return nil, ErrInvalidInput
@@ -164,23 +202,40 @@ func normalizeFood(food *domain.Food) (*domain.Food, error) {
 		return nil, ErrInvalidInput
 	}
 
-	// ID и владелец назначаются Repository, а не клиентом.
+	// Суммарная масса БЖУ не может существенно превышать 100 г.
+	totalMacros := normalized.ProteinPer100g +
+		normalized.FatPer100g +
+		normalized.CarbsPer100g
+
+	if totalMacros > 100.1+1e-9 {
+		return nil, ErrInvalidInput
+	}
+
+	// Системные идентификаторы нельзя задавать через данные продукта.
 	normalized.ID = ""
 	normalized.OwnerUserID = ""
 
 	return &normalized, nil
 }
 
-// validNutritionValue проверяет допустимую пищевую ценность на 100 г.
+// validNutritionValue проверяет границы и точность до двух знаков.
 func validNutritionValue(value float64, max float64) bool {
-	return !math.IsNaN(value) &&
-		!math.IsInf(value, 0) &&
-		value >= 0 &&
-		value <= max &&
-		math.Round(value*100)/100 == value
+	if math.IsNaN(value) || math.IsInf(value, 0) ||
+		value < 0 || value > max {
+		return false
+	}
+
+	scaled := value * 100
+
+	return math.Abs(scaled-math.Round(scaled)) < 1e-7
 }
 
-func validUUID(value string) bool {
-	_, err := uuid.Parse(value)
-	return err == nil
+// normalizeUUID приводит идентификатор к стандартному UUID-формату.
+func normalizeUUID(value string) (string, error) {
+	id, err := uuid.Parse(value)
+	if err != nil {
+		return "", ErrInvalidInput
+	}
+
+	return id.String(), nil
 }
