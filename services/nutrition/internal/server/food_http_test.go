@@ -3,7 +3,6 @@ package server
 import (
 	"context"
 	"encoding/json"
-	"io"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -430,35 +429,7 @@ func sendCreateFoodRequest(
 	token string,
 	body string,
 ) (int, []byte) {
-	t.Helper()
-
-	req, err := http.NewRequest(
-		http.MethodPost,
-		baseURL+"/nutrition/foods",
-		strings.NewReader(body),
-	)
-	if err != nil {
-		t.Fatalf("create food request: %v", err)
-	}
-
-	req.Header.Set("Content-Type", "application/json")
-
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("send food request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read food response: %v", err)
-	}
-
-	return resp.StatusCode, responseBody
+	return sendTestRequest(t, client, baseURL, http.MethodPost, "/nutrition/foods", token, body)
 }
 
 // sendFoodGetRequest отправляет GET-запрос к каталогу продуктов.
@@ -469,33 +440,7 @@ func sendFoodGetRequest(
 	path string,
 	token string,
 ) (int, []byte) {
-	t.Helper()
-
-	req, err := http.NewRequest(
-		http.MethodGet,
-		baseURL+path,
-		nil,
-	)
-	if err != nil {
-		t.Fatalf("create food GET request: %v", err)
-	}
-
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("send food GET request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	body, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read food response: %v", err)
-	}
-
-	return resp.StatusCode, body
+	return sendTestRequest(t, client, baseURL, http.MethodGet, path, token, "")
 }
 
 // sendFoodMutationRequest отправляет PUT или DELETE в HTTP-тестах.
@@ -508,35 +453,5 @@ func sendFoodMutationRequest(
 	token string,
 	body string,
 ) (int, []byte) {
-	t.Helper()
-
-	req, err := http.NewRequest(
-		method,
-		baseURL+path,
-		strings.NewReader(body),
-	)
-	if err != nil {
-		t.Fatalf("create food mutation request: %v", err)
-	}
-
-	if body != "" {
-		req.Header.Set("Content-Type", "application/json")
-	}
-
-	if token != "" {
-		req.Header.Set("Authorization", "Bearer "+token)
-	}
-
-	resp, err := client.Do(req)
-	if err != nil {
-		t.Fatalf("send food mutation request: %v", err)
-	}
-	defer resp.Body.Close()
-
-	responseBody, err := io.ReadAll(resp.Body)
-	if err != nil {
-		t.Fatalf("read food mutation response: %v", err)
-	}
-
-	return resp.StatusCode, responseBody
+	return sendTestRequest(t, client, baseURL, method, path, token, body)
 }
