@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"math"
+	"strings"
 	"testing"
 
 	"fitness-platform/services/nutrition/internal/domain"
@@ -259,5 +260,48 @@ func TestGetTargetsRepositoryError(t *testing.T) {
 			"expected database error, got %v",
 			err,
 		)
+	}
+}
+
+func TestProfileUUIDValidation(t *testing.T) {
+	repo := &fakeNutritionRepository{}
+	svc := NewNutritionService(repo)
+
+	profile := validTestProfile()
+	profile.UserID = "not-a-uuid"
+
+	if _, err := svc.UpsertProfile(context.Background(), profile); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected invalid UUID for upsert, got %v", err)
+	}
+	if _, err := svc.GetProfile(context.Background(), "not-a-uuid"); !errors.Is(err, ErrInvalidInput) {
+		t.Fatalf("expected invalid UUID for get, got %v", err)
+	}
+	if repo.upsertCalled || repo.getCalled {
+		t.Fatal("repository should not receive invalid UUID")
+	}
+}
+
+func TestProfileUUIDNormalization(t *testing.T) {
+	repo := &fakeNutritionRepository{}
+	svc := NewNutritionService(repo)
+
+	profile := validTestProfile()
+	originalID := strings.ToUpper(profile.UserID)
+	profile.UserID = originalID
+
+	saved, err := svc.UpsertProfile(context.Background(), profile)
+	if err != nil {
+		t.Fatalf("upsert uppercase UUID: %v", err)
+	}
+	if saved == nil || saved.UserID != strings.ToLower(originalID) {
+		t.Fatalf("expected canonical UUID, got %#v", saved)
+	}
+	if profile.UserID != originalID {
+		t.Fatal("service changed caller-owned profile")
+	}
+
+	found, err := svc.GetProfile(context.Background(), originalID)
+	if err != nil || found == nil || found.UserID != strings.ToLower(originalID) {
+		t.Fatalf("get uppercase UUID: profile=%#v err=%v", found, err)
 	}
 }
