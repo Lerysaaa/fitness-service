@@ -132,6 +132,7 @@ func runMigrations(databaseURL string) error {
 			err,
 		)
 	}
+	defer m.Close()
 
 	if err := m.Up(); err != nil &&
 		err != migrate.ErrNoChange {

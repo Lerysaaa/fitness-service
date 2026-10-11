@@ -5,11 +5,14 @@ import (
 	"errors"
 	"io"
 	"net/http"
+	"strconv"
 
 	"fitness-platform/pkg/logger"
 	"fitness-platform/pkg/middleware"
 	"fitness-platform/services/nutrition/internal/domain"
 	"fitness-platform/services/nutrition/internal/service"
+
+	"github.com/go-chi/chi/v5"
 )
 
 type FoodHandler struct {
@@ -110,4 +113,101 @@ func (h *FoodHandler) CreateFood(
 
 	w.Header().Set("Location", "/nutrition/foods/"+created.ID)
 	writeJSON(w, http.StatusCreated, created)
+}
+
+// ListFoods возвращает общие и личные продукты с пагинацией.
+func (h *FoodHandler) ListFoods(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "user not authenticated")
+		return
+	}
+
+	limit := 20
+	offset := 0
+
+	if value := r.URL.Query().Get("limit"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid pagination")
+			return
+		}
+		limit = parsed
+	}
+
+	if value := r.URL.Query().Get("offset"); value != "" {
+		parsed, err := strconv.Atoi(value)
+		if err != nil {
+			writeError(w, http.StatusBadRequest, "invalid pagination")
+			return
+		}
+		offset = parsed
+	}
+
+	foods, err := h.foodService.ListFoods(
+		r.Context(),
+		userID,
+		limit,
+		offset,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid pagination")
+			return
+		}
+
+		logger.FromContext(r.Context()).
+			Error().
+			Err(err).
+			Msg("failed to list foods")
+
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, foods)
+}
+
+// GetFood возвращает доступный пользователю продукт по ID.
+func (h *FoodHandler) GetFood(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "user not authenticated")
+		return
+	}
+
+	foodID := chi.URLParam(r, "id")
+
+	food, err := h.foodService.GetFood(
+		r.Context(),
+		userID,
+		foodID,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid food ID")
+			return
+		}
+
+		logger.FromContext(r.Context()).
+			Error().
+			Err(err).
+			Msg("failed to get food")
+
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if food == nil {
+		writeError(w, http.StatusNotFound, "food not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, food)
 }

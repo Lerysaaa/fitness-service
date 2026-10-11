@@ -77,6 +77,16 @@ func NewRouter(
 			"/nutrition/foods",
 			foodHandler.CreateFood,
 		)
+
+		r.Get(
+			"/nutrition/foods",
+			foodHandler.ListFoods,
+		)
+
+		r.Get(
+			"/nutrition/foods/{id}",
+			foodHandler.GetFood,
+		)
 	})
 
 	return r

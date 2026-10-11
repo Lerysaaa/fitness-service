@@ -560,6 +560,142 @@ func TestNutritionProfileHTTP(t *testing.T) {
 		}
 	})
 
+	t.Run("list and get foods", func(t *testing.T) {
+		own, err := foodRepo.CreatePersonalFood(
+			ctx,
+			userA,
+			&domain.Food{
+				Name:            "GET Test Own Food",
+				CaloriesPer100g: 180,
+				ProteinPer100g:  6,
+				FatPer100g:      4,
+				CarbsPer100g:    30,
+			},
+		)
+		if err != nil {
+			t.Fatalf("create own food: %v", err)
+		}
+
+		foreign, err := foodRepo.CreatePersonalFood(
+			ctx,
+			userB,
+			&domain.Food{
+				Name:            "GET Test Foreign Food",
+				CaloriesPer100g: 100,
+				ProteinPer100g:  5,
+				FatPer100g:      2,
+				CarbsPer100g:    15,
+			},
+		)
+		if err != nil {
+			t.Fatalf("create foreign food: %v", err)
+		}
+
+		var sharedID string
+		err = pool.QueryRow(ctx, `
+			INSERT INTO foods (
+				name,
+				calories_per_100g,
+				protein_per_100g,
+				fat_per_100g,
+				carbs_per_100g
+			)
+			VALUES ('GET Test Shared Food', 60, 3, 3.2, 4.8)
+			RETURNING id::text
+		`).Scan(&sharedID)
+		if err != nil {
+			t.Fatalf("create shared food: %v", err)
+		}
+
+		status, body := sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods", tokenA,
+		)
+		checkStatus(t, status, http.StatusOK, body)
+
+		var foods []domain.Food
+		if err := json.Unmarshal(body, &foods); err != nil {
+			t.Fatalf("decode foods: %v", err)
+		}
+
+		foundOwn := false
+		foundShared := false
+
+		for _, food := range foods {
+			if food.ID == own.ID {
+				foundOwn = true
+			}
+			if food.ID == sharedID {
+				foundShared = true
+			}
+			if food.ID == foreign.ID {
+				t.Fatal("foreign food is visible in the list")
+			}
+		}
+
+		if !foundOwn || !foundShared {
+			t.Fatal("own or shared food missing from list")
+		}
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods/"+own.ID, tokenA,
+		)
+		checkStatus(t, status, http.StatusOK, body)
+
+		var result domain.Food
+		if err := json.Unmarshal(body, &result); err != nil {
+			t.Fatalf("decode food: %v", err)
+		}
+		if result.ID != own.ID {
+			t.Fatal("returned incorrect food")
+		}
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods/"+own.ID, tokenB,
+		)
+		checkStatus(t, status, http.StatusNotFound, body)
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods/"+sharedID, tokenB,
+		)
+		checkStatus(t, status, http.StatusOK, body)
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods/invalid-id", tokenA,
+		)
+		checkStatus(t, status, http.StatusBadRequest, body)
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods?limit=101", tokenA,
+		)
+		checkStatus(t, status, http.StatusBadRequest, body)
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods?limit=1", tokenA,
+		)
+		checkStatus(t, status, http.StatusOK, body)
+
+		var page []domain.Food
+		if err := json.Unmarshal(body, &page); err != nil {
+			t.Fatalf("decode food page: %v", err)
+		}
+		if len(page) != 1 {
+			t.Fatalf("expected 1 food, got %d", len(page))
+		}
+
+		status, body = sendFoodGetRequest(
+			t, client, httpServer.URL,
+			"/nutrition/foods", "",
+		)
+		checkStatus(t, status, http.StatusUnauthorized, body)
+	})
+
 }
 
 // Создаёт JWT с указанным userID.
@@ -743,4 +879,41 @@ func sendCreateFoodRequest(
 	}
 
 	return resp.StatusCode, responseBody
+}
+
+// sendFoodGetRequest отправляет GET-запрос к каталогу продуктов.
+func sendFoodGetRequest(
+	t *testing.T,
+	client *http.Client,
+	baseURL string,
+	path string,
+	token string,
+) (int, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(
+		http.MethodGet,
+		baseURL+path,
+		nil,
+	)
+	if err != nil {
+		t.Fatalf("create food GET request: %v", err)
+	}
+
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("send food GET request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	body, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read food response: %v", err)
+	}
+
+	return resp.StatusCode, body
 }
