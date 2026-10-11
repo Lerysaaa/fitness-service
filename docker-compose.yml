@@ -139,7 +139,7 @@ services:
       postgres_workout:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
 
   analytics:
     build:
@@ -157,7 +157,7 @@ services:
       postgres_analytics:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
 
   planner:
     build:
@@ -175,7 +175,7 @@ services:
       postgres_planner:
         condition: service_healthy
       redis:
-        condition: service_healthy
+        condition: service_started
 
   nutrition:
     build:

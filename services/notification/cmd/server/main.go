@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"github.com/kelseyhightower/envconfig"
 	"github.com/redis/go-redis/v9"
 
 	"fitness-platform/pkg/logger"
@@ -15,9 +16,26 @@ import (
 	"fitness-platform/services/notification/internal/worker"
 )
 
+type consumerRecoveryConfig struct {
+	ClaimMinIdle time.Duration `envconfig:"REDIS_CONSUMER_CLAIM_MIN_IDLE" default:"30s"`
+}
+
 func main() {
 	// 1. Инициализация логгера
 	logger.Init("notification", "info")
+
+	var recoveryCfg consumerRecoveryConfig
+
+	if err := envconfig.Process("", &recoveryCfg); err != nil {
+		logger.Log.Fatal().
+			Err(err).
+			Msg("failed to load consumer recovery config")
+	}
+
+	if recoveryCfg.ClaimMinIdle < 20*time.Second {
+		logger.Log.Fatal().
+			Msg("notification claim min idle must be at least 20s")
+	}
 
 	// 2. Читаем конфигурацию из переменных окружения
 	redisAddr := os.Getenv("REDIS_ADDR")
@@ -40,9 +58,7 @@ func main() {
 
 	// 4. Подключение к Redis
 	redisClient := redis.NewClient(&redis.Options{Addr: redisAddr})
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Log.Fatal().Err(err).Msg("Failed to connect to Redis")
-	}
+
 	defer redisClient.Close()
 
 	// 5. Создаём отправителя
@@ -58,8 +74,10 @@ func main() {
 		"workout.events",
 		"notification-group",
 		"notification-consumer-1",
-		pool,
+		recoveryCfg.ClaimMinIdle,
+		notificationSender,
 	)
+
 	go redisConsumer.Run(ctx)
 
 	// 8. Создаём и запускаем Reminder Poller

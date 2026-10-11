@@ -5,13 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/redis/go-redis/v9"
 
 	"fitness-platform/pkg/events"
 	"fitness-platform/pkg/logger"
+	"fitness-platform/pkg/redisstartup"
 	"fitness-platform/services/planner/internal/domain"
 	"fitness-platform/services/planner/internal/service"
 )
@@ -23,6 +23,10 @@ type RedisConsumer struct {
 	group       string
 	consumer    string
 	planner     *service.PlannerService
+
+	claimMinIdle time.Duration
+	claimCount   int64
+	claimStart   string
 }
 
 // NewRedisConsumer создаёт нового потребителя.
@@ -32,49 +36,72 @@ func NewRedisConsumer(
 	group,
 	consumerName string,
 	planner *service.PlannerService,
+	claimMinIdleTime time.Duration,
+	claimCount int64,
 ) *RedisConsumer {
 	return &RedisConsumer{
-		redisClient: redisClient,
-		stream:      stream,
-		group:       group,
-		consumer:    consumerName,
-		planner:     planner,
+		redisClient:  redisClient,
+		stream:       stream,
+		group:        group,
+		consumer:     consumerName,
+		planner:      planner,
+		claimMinIdle: claimMinIdleTime,
+		claimCount:   claimCount,
+		claimStart:   "0-0",
 	}
 }
 
 // Run запускает цикл обработки.
 func (c *RedisConsumer) Run(ctx context.Context) {
-	err := c.redisClient.XGroupCreateMkStream(
-		ctx,
-		c.stream,
-		c.group,
-		"$",
-	).Err()
-
-	if err != nil && !strings.Contains(err.Error(), "BUSYGROUP") {
-		logger.Log.Error().
-			Err(err).
-			Msg("failed to create consumer group")
-
-		return
-	}
-
-	for {
-		select {
-		case <-ctx.Done():
-			logger.Log.Info().
-				Msg("planner consumer stopped")
-
-			return
-
-		default:
-			c.processBatch(ctx)
-			time.Sleep(1 * time.Second)
-		}
-	}
+	redisstartup.Runner{
+		Client:         c.redisClient,
+		Stream:         c.stream,
+		Group:          c.group,
+		Service:        "planner",
+		RecoverPending: c.recoverPendingBatch,
+		ReadNew:        c.processBatch,
+		OnGroupReady: func() {
+			c.claimStart = "0-0"
+		},
+	}.Run(ctx)
 }
 
-func (c *RedisConsumer) processBatch(ctx context.Context) {
+// recoverPendingBatch проверяет и обрабатывает сообщения, которые были прочитаны, но не подтверждены.
+func (c *RedisConsumer) recoverPendingBatch(
+	ctx context.Context,
+) error {
+	messages, nextStart, err := c.redisClient.XAutoClaim(
+		ctx,
+		&redis.XAutoClaimArgs{
+			Stream:   c.stream,
+			Group:    c.group,
+			Consumer: c.consumer,
+			MinIdle:  c.claimMinIdle,
+			Start:    c.claimStart,
+			Count:    c.claimCount,
+		},
+	).Result()
+
+	if err != nil {
+		return fmt.Errorf("xautoclaim: %w", err)
+	}
+
+	c.claimStart = nextStart
+
+	if len(messages) > 0 {
+		logger.Log.Info().
+			Int("count", len(messages)).
+			Msg("recovered planner pending messages")
+
+		c.processMessages(ctx, messages)
+	}
+
+	return nil
+}
+
+func (c *RedisConsumer) processBatch(
+	ctx context.Context,
+) error {
 	streams, err := c.redisClient.XReadGroup(
 		ctx,
 		&redis.XReadGroupArgs{
@@ -82,97 +109,103 @@ func (c *RedisConsumer) processBatch(ctx context.Context) {
 			Consumer: c.consumer,
 			Streams:  []string{c.stream, ">"},
 			Count:    10,
-			Block:    1 * time.Second,
+			Block:    time.Second,
 		},
 	).Result()
 
+	if errors.Is(err, redis.Nil) {
+		return nil
+	}
+
 	if err != nil {
-		if redis.HasErrorPrefix(err, "timeout") {
-			return
-		}
-
-		logger.Log.Error().
-			Err(err).
-			Msg("failed to read from redis stream")
-
-		return
+		return fmt.Errorf("xreadgroup: %w", err)
 	}
 
 	for _, stream := range streams {
-		for _, message := range stream.Messages {
-			envelope, err := parseEnvelope(message.Values)
-			if err != nil {
+		c.processMessages(ctx, stream.Messages)
+	}
+
+	return nil
+}
+
+func (c *RedisConsumer) processMessages(
+	ctx context.Context,
+	messages []redis.XMessage,
+) {
+	for _, message := range messages {
+		if ctx.Err() != nil {
+			return
+		}
+
+		envelope, err := parseEnvelope(message.Values)
+		if err != nil {
+			logger.Log.Error().
+				Err(err).
+				Str("redis_message_id", message.ID).
+				Msg("failed to parse event envelope")
+
+			c.ackMessage(ctx, message.ID)
+			continue
+		}
+
+		if envelope.EventVersion != events.Version1 {
+			logger.Log.Error().
+				Str("event_id", envelope.EventID).
+				Int("event_version", envelope.EventVersion).
+				Msg("unsupported event version")
+
+			c.ackMessage(ctx, message.ID)
+			continue
+		}
+
+		switch envelope.EventType {
+		case events.TypeWorkoutCreated:
+			var workoutEvent domain.WorkoutCreatedEvent
+
+			if err := json.Unmarshal(
+				envelope.Payload,
+				&workoutEvent,
+			); err != nil {
 				logger.Log.Error().
 					Err(err).
-					Str("redis_message_id", message.ID).
-					Msg("failed to parse event envelope")
+					Str("event_id", envelope.EventID).
+					Msg("failed to unmarshal workout.created")
 
 				c.ackMessage(ctx, message.ID)
 				continue
 			}
 
-			if envelope.EventVersion != events.Version1 {
+			if err := c.planner.ProcessWorkoutCreated(
+				ctx,
+				envelope.EventID,
+				workoutEvent,
+			); err != nil {
 				logger.Log.Error().
+					Err(err).
 					Str("event_id", envelope.EventID).
-					Str("event_type", envelope.EventType).
-					Int("event_version", envelope.EventVersion).
-					Msg("unsupported event version")
+					Str("redis_message_id", message.ID).
+					Msg("failed to process workout.created")
 
-				c.ackMessage(ctx, message.ID)
+				// Нет ACK: сообщение остаётся в PEL.
 				continue
 			}
 
-			switch envelope.EventType {
-			case events.TypeWorkoutCreated:
-				var workoutEvent domain.WorkoutCreatedEvent
+			c.ackMessage(ctx, message.ID)
 
-				if err := json.Unmarshal(
-					envelope.Payload,
-					&workoutEvent,
-				); err != nil {
-					logger.Log.Error().
-						Err(err).
-						Str("event_id", envelope.EventID).
-						Str("redis_message_id", message.ID).
-						Msg("failed to unmarshal workout.created payload")
+		case events.TypeWorkoutUpdated:
+			logger.Log.Debug().
+				Str("event_id", envelope.EventID).
+				Msg("workout.updated is not handled by planner")
 
-					c.ackMessage(ctx, message.ID)
-					continue
-				}
+			c.ackMessage(ctx, message.ID)
 
-				if err := c.planner.ProcessWorkoutCreated(
-					ctx,
-					envelope.EventID,
-					workoutEvent,
-				); err != nil {
-					logger.Log.Error().
-						Err(err).
-						Str("event_id", envelope.EventID).
-						Str("redis_message_id", message.ID).
-						Msg("failed to process workout.created event")
+		default:
+			logger.Log.Debug().
+				Str("event_id", envelope.EventID).
+				Str("event_type", envelope.EventType).
+				Msg("event type is not handled by planner")
 
-					// Временная ошибка обработки.
-					// ACK не делаем — сообщение остаётся pending.
-					continue
-				}
-
-				c.ackMessage(ctx, message.ID)
-
-			case events.TypeWorkoutUpdated:
-				logger.Log.Debug().
-					Str("event_id", envelope.EventID).
-					Msg("workout.updated is not handled by planner")
-
-				c.ackMessage(ctx, message.ID)
-
-			default:
-				logger.Log.Debug().
-					Str("event_id", envelope.EventID).
-					Str("event_type", envelope.EventType).
-					Msg("event type is not handled by planner")
-
-				c.ackMessage(ctx, message.ID)
-			}
+			c.ackMessage(ctx, message.ID)
 		}
 	}
 }

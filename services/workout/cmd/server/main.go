@@ -80,9 +80,6 @@ func main() {
 			Err(err).
 			Msg("Failed to initialize Redis tracing")
 	}
-	if err := redisClient.Ping(ctx).Err(); err != nil {
-		logger.Log.Fatal().Err(err).Msg("failed to ping redis")
-	}
 	defer redisClient.Close()
 
 	// 7. Создаём сервис
@@ -109,7 +106,17 @@ func main() {
 		logger.Log.Fatal().Err(err).Msg("Failed to start HTTP server")
 	}
 
-	publisher := outbox.NewPublisher(workoutRepo, redisClient, "workout.events", 5*time.Second)
+	outboxRepo := postgres.NewOutboxRepo(
+		pool,
+		cfg.DatabaseOperationTimeout,
+	)
+
+	publisher := outbox.NewPublisher(
+		outboxRepo,
+		redisClient,
+		"workout.events",
+		5*time.Second,
+	)
 
 	var wg sync.WaitGroup
 	wg.Add(1)
