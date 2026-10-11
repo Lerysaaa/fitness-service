@@ -1,9 +1,7 @@
 package handler
 
 import (
-	"encoding/json"
 	"errors"
-	"io"
 	"net/http"
 	"strconv"
 
@@ -23,7 +21,7 @@ func NewFoodHandler(foodService *service.FoodService) *FoodHandler {
 	return &FoodHandler{foodService: foodService}
 }
 
-type createFoodRequest struct {
+type foodRequest struct {
 	Name            string   `json:"name"`
 	Brand           string   `json:"brand"`
 	CaloriesPer100g *float64 `json:"calories_per_100g"`
@@ -169,31 +167,13 @@ func (h *FoodHandler) GetFood(
 	writeJSON(w, http.StatusOK, food)
 }
 
-// readFoodRequest читает и проверяет структуру запроса на создание или изменение продукта.
+// readFoodRequest преобразует JSON в данные продукта для POST и PUT.
 func readFoodRequest(
 	w http.ResponseWriter,
 	r *http.Request,
 ) (*domain.Food, bool) {
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer r.Body.Close()
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	var req createFoodRequest
-
-	if err := decoder.Decode(&req); err != nil {
-		writeFoodDecodeError(w, err)
-		return nil, false
-	}
-
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		if err == nil {
-			writeError(w, http.StatusBadRequest, "invalid JSON body")
-		} else {
-			writeFoodDecodeError(w, err)
-		}
+	var req foodRequest
+	if !decodeJSONRequest(w, r, &req) {
 		return nil, false
 	}
 
@@ -213,18 +193,6 @@ func readFoodRequest(
 		FatPer100g:      *req.FatPer100g,
 		CarbsPer100g:    *req.CarbsPer100g,
 	}, true
-}
-
-// writeFoodDecodeError возвращает соответствующую ошибку чтения JSON.
-func writeFoodDecodeError(w http.ResponseWriter, err error) {
-	var sizeErr *http.MaxBytesError
-
-	if errors.As(err, &sizeErr) {
-		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-		return
-	}
-
-	writeError(w, http.StatusBadRequest, "invalid JSON body")
 }
 
 // UpdateFood изменяет личный продукт пользователя.
