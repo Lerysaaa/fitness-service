@@ -5,12 +5,12 @@ import (
 	"net/http"
 	"strconv"
 
+	"github.com/go-chi/chi/v5"
+
 	"fitness-platform/pkg/logger"
 	"fitness-platform/pkg/middleware"
 	"fitness-platform/services/nutrition/internal/domain"
 	"fitness-platform/services/nutrition/internal/service"
-
-	"github.com/go-chi/chi/v5"
 )
 
 type FoodHandler struct {
