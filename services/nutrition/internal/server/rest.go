@@ -87,6 +87,16 @@ func NewRouter(
 			"/nutrition/foods/{id}",
 			foodHandler.GetFood,
 		)
+
+		r.Put(
+			"/nutrition/foods/{id}",
+			foodHandler.UpdateFood,
+		)
+
+		r.Delete(
+			"/nutrition/foods/{id}",
+			foodHandler.DeleteFood,
+		)
 	})
 
 	return r

@@ -43,52 +43,9 @@ func (h *FoodHandler) CreateFood(
 		return
 	}
 
-	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
-	defer r.Body.Close()
-
-	decoder := json.NewDecoder(r.Body)
-	decoder.DisallowUnknownFields()
-
-	var req createFoodRequest
-
-	if err := decoder.Decode(&req); err != nil {
-		var sizeErr *http.MaxBytesError
-		if errors.As(err, &sizeErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return
-		}
-
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
+	food, ok := readFoodRequest(w, r)
+	if !ok {
 		return
-	}
-
-	var extra any
-	if err := decoder.Decode(&extra); err != io.EOF {
-		var sizeErr *http.MaxBytesError
-		if errors.As(err, &sizeErr) {
-			writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
-			return
-		}
-
-		writeError(w, http.StatusBadRequest, "invalid JSON body")
-		return
-	}
-
-	if req.CaloriesPer100g == nil ||
-		req.ProteinPer100g == nil ||
-		req.FatPer100g == nil ||
-		req.CarbsPer100g == nil {
-		writeError(w, http.StatusBadRequest, "missing nutrition values")
-		return
-	}
-
-	food := &domain.Food{
-		Name:            req.Name,
-		Brand:           req.Brand,
-		CaloriesPer100g: *req.CaloriesPer100g,
-		ProteinPer100g:  *req.ProteinPer100g,
-		FatPer100g:      *req.FatPer100g,
-		CarbsPer100g:    *req.CarbsPer100g,
 	}
 
 	created, err := h.foodService.CreateFood(
@@ -210,4 +167,150 @@ func (h *FoodHandler) GetFood(
 	}
 
 	writeJSON(w, http.StatusOK, food)
+}
+
+// readFoodRequest читает и проверяет структуру запроса на создание или изменение продукта.
+func readFoodRequest(
+	w http.ResponseWriter,
+	r *http.Request,
+) (*domain.Food, bool) {
+	r.Body = http.MaxBytesReader(w, r.Body, 1<<20)
+	defer r.Body.Close()
+
+	decoder := json.NewDecoder(r.Body)
+	decoder.DisallowUnknownFields()
+
+	var req createFoodRequest
+
+	if err := decoder.Decode(&req); err != nil {
+		writeFoodDecodeError(w, err)
+		return nil, false
+	}
+
+	var extra any
+	if err := decoder.Decode(&extra); err != io.EOF {
+		if err == nil {
+			writeError(w, http.StatusBadRequest, "invalid JSON body")
+		} else {
+			writeFoodDecodeError(w, err)
+		}
+		return nil, false
+	}
+
+	if req.CaloriesPer100g == nil ||
+		req.ProteinPer100g == nil ||
+		req.FatPer100g == nil ||
+		req.CarbsPer100g == nil {
+		writeError(w, http.StatusBadRequest, "missing nutrition values")
+		return nil, false
+	}
+
+	return &domain.Food{
+		Name:            req.Name,
+		Brand:           req.Brand,
+		CaloriesPer100g: *req.CaloriesPer100g,
+		ProteinPer100g:  *req.ProteinPer100g,
+		FatPer100g:      *req.FatPer100g,
+		CarbsPer100g:    *req.CarbsPer100g,
+	}, true
+}
+
+// writeFoodDecodeError возвращает соответствующую ошибку чтения JSON.
+func writeFoodDecodeError(w http.ResponseWriter, err error) {
+	var sizeErr *http.MaxBytesError
+
+	if errors.As(err, &sizeErr) {
+		writeError(w, http.StatusRequestEntityTooLarge, "request body too large")
+		return
+	}
+
+	writeError(w, http.StatusBadRequest, "invalid JSON body")
+}
+
+// UpdateFood изменяет личный продукт пользователя.
+func (h *FoodHandler) UpdateFood(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "user not authenticated")
+		return
+	}
+
+	foodID := chi.URLParam(r, "id")
+
+	food, ok := readFoodRequest(w, r)
+	if !ok {
+		return
+	}
+
+	updated, err := h.foodService.UpdateFood(
+		r.Context(),
+		userID,
+		foodID,
+		food,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid food data or ID")
+			return
+		}
+
+		logger.FromContext(r.Context()).
+			Error().
+			Err(err).
+			Msg("failed to update food")
+
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if updated == nil {
+		writeError(w, http.StatusNotFound, "food not found")
+		return
+	}
+
+	writeJSON(w, http.StatusOK, updated)
+}
+
+// DeleteFood мягко удаляет личный продукт пользователя.
+func (h *FoodHandler) DeleteFood(
+	w http.ResponseWriter,
+	r *http.Request,
+) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "user not authenticated")
+		return
+	}
+
+	foodID := chi.URLParam(r, "id")
+
+	deleted, err := h.foodService.DeleteFood(
+		r.Context(),
+		userID,
+		foodID,
+	)
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid food ID")
+			return
+		}
+
+		logger.FromContext(r.Context()).
+			Error().
+			Err(err).
+			Msg("failed to delete food")
+
+		writeError(w, http.StatusInternalServerError, "internal server error")
+		return
+	}
+
+	if !deleted {
+		writeError(w, http.StatusNotFound, "food not found")
+		return
+	}
+
+	w.WriteHeader(http.StatusNoContent)
 }
