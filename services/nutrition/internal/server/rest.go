@@ -18,12 +18,15 @@ import (
 
 // NewRouter создаёт HTTP-маршруты Nutrition Service.
 // Используется и приложением, и тестами.
+
 func NewRouter(
 	nutritionHandler *handler.NutritionHandler,
+	foodHandler *handler.FoodHandler,
 	jwtSecret string,
 	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
 ) http.Handler {
+
 	r := chi.NewRouter()
 
 	registry, httpMetrics := appmetrics.NewServiceRegistry()
@@ -69,15 +72,22 @@ func NewRouter(
 			"/nutrition/targets",
 			nutritionHandler.GetTargets,
 		)
+
+		r.Post(
+			"/nutrition/foods",
+			foodHandler.CreateFood,
+		)
 	})
 
 	return r
 }
 
 // RunREST запускает HTTP-сервер.
+
 func RunREST(
 	addr string,
 	nutritionHandler *handler.NutritionHandler,
+	foodHandler *handler.FoodHandler,
 	jwtSecret string,
 	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
@@ -85,6 +95,7 @@ func RunREST(
 
 	router := NewRouter(
 		nutritionHandler,
+		foodHandler,
 		jwtSecret,
 		readinessTimeout,
 		readinessChecks...,

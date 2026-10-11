@@ -126,10 +126,19 @@ func TestNutritionProfileHTTP(t *testing.T) {
 		nutritionService,
 	)
 
+	foodRepo := postgresrepo.NewFoodRepo(
+		pool,
+		2*time.Second,
+	)
+
+	foodService := service.NewFoodService(foodRepo)
+	foodHandler := handler.NewFoodHandler(foodService)
+
 	// 5. Запускаем временный HTTP-сервер.
 	httpServer := httptest.NewServer(
 		NewRouter(
 			nutritionHandler,
+			foodHandler,
 			testJWTSecret,
 			time.Second,
 			func(ctx context.Context) error {
@@ -497,6 +506,60 @@ func TestNutritionProfileHTTP(t *testing.T) {
 		}
 	})
 
+	t.Run("create food without JWT", func(t *testing.T) {
+		status, body := sendCreateFoodRequest(
+			t, client, httpServer.URL, "",
+			`{"name":"Oatmeal","calories_per_100g":180,"protein_per_100g":6,"fat_per_100g":4,"carbs_per_100g":30}`,
+		)
+
+		checkStatus(t, status, http.StatusUnauthorized, body)
+	})
+
+	t.Run("create food with invalid data", func(t *testing.T) {
+		status, body := sendCreateFoodRequest(
+			t, client, httpServer.URL, tokenA,
+			`{"name":"Invalid","calories_per_100g":200,"protein_per_100g":80,"fat_per_100g":80,"carbs_per_100g":80}`,
+		)
+
+		checkStatus(t, status, http.StatusBadRequest, body)
+	})
+
+	t.Run("create personal food", func(t *testing.T) {
+		status, body := sendCreateFoodRequest(
+			t, client, httpServer.URL, tokenA,
+			`{"name":"  Oatmeal  ","brand":"Test","calories_per_100g":180,"protein_per_100g":6,"fat_per_100g":4,"carbs_per_100g":30}`,
+		)
+
+		checkStatus(t, status, http.StatusCreated, body)
+
+		var created domain.Food
+		if err := json.Unmarshal(body, &created); err != nil {
+			t.Fatalf("decode created food: %v", err)
+		}
+
+		if created.ID == "" || created.OwnerUserID != userA {
+			t.Fatal("incorrect food ID or owner")
+		}
+
+		if created.Name != "Oatmeal" {
+			t.Fatal("food name was not normalized")
+		}
+
+		saved, err := foodRepo.GetVisibleFood(ctx, userA, created.ID)
+		if err != nil || saved == nil {
+			t.Fatalf("food was not saved: %v", err)
+		}
+
+		foreign, err := foodRepo.GetVisibleFood(ctx, userB, created.ID)
+		if err != nil {
+			t.Fatalf("check foreign access: %v", err)
+		}
+
+		if foreign != nil {
+			t.Fatal("user B can access user A's food")
+		}
+	})
+
 }
 
 // Создаёт JWT с указанным userID.
@@ -642,4 +705,42 @@ func sendTargetsRequest(
 	}
 
 	return resp.StatusCode, body
+}
+
+func sendCreateFoodRequest(
+	t *testing.T,
+	client *http.Client,
+	baseURL string,
+	token string,
+	body string,
+) (int, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(
+		http.MethodPost,
+		baseURL+"/nutrition/foods",
+		strings.NewReader(body),
+	)
+	if err != nil {
+		t.Fatalf("create food request: %v", err)
+	}
+
+	req.Header.Set("Content-Type", "application/json")
+
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("send food request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read food response: %v", err)
+	}
+
+	return resp.StatusCode, responseBody
 }

@@ -86,10 +86,20 @@ func main() {
 		nutritionService,
 	)
 
+	foodRepo := postgresrepo.NewFoodRepo(
+		pool,
+		cfg.DatabaseOperationTimeout,
+	)
+
+	foodService := service.NewFoodService(foodRepo)
+
+	foodHandler := handler.NewFoodHandler(foodService)
+
 	// 7. Запускаем HTTP-сервер
 	httpShutdown, err := server.RunREST(
 		fmt.Sprintf(":%s", cfg.HTTPPort),
 		nutritionHandler,
+		foodHandler,
 		cfg.JWTSecret,
 		cfg.ReadinessTimeout,
 		func(ctx context.Context) error {
