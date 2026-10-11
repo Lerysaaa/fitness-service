@@ -13,18 +13,15 @@ import (
 	"fitness-platform/pkg/shutdown"
 	"fitness-platform/pkg/tracing"
 	"fitness-platform/services/nutrition/internal/database"
-	"fitness-platform/services/nutrition/internal/server"
-
 	"fitness-platform/services/nutrition/internal/handler"
 	postgresrepo "fitness-platform/services/nutrition/internal/repository/postgres"
+	"fitness-platform/services/nutrition/internal/server"
 	"fitness-platform/services/nutrition/internal/service"
 )
 
 func main() {
-	// 1. Инициализация логгера
 	logger.Init("nutrition", "info")
 
-	// 2. Загрузка конфигурации
 	cfg, err := config.Load()
 	if err != nil {
 		logger.Log.Fatal().
@@ -32,11 +29,9 @@ func main() {
 			Msg("Failed to load config")
 	}
 
-	// 3. Корневой контекст
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
 
-	// 4. Инициализация трассировки
 	tracingShutdown, err := tracing.Init(
 		ctx,
 		"nutrition",
@@ -48,7 +43,6 @@ func main() {
 			Msg("Failed to initialize tracing")
 	}
 
-	// 4. Подключение к базе данных
 	pool, err := database.NewPool(
 		ctx,
 		cfg.DatabaseURL,
@@ -63,25 +57,21 @@ func main() {
 	}
 	defer pool.Close()
 
-	// 6. Применяем миграции
 	if err := runMigrations(cfg.DatabaseURL); err != nil {
 		logger.Log.Fatal().
 			Err(err).
 			Msg("Failed to run migrations")
 	}
 
-	// 7. Создаём repository
 	nutritionRepo := postgresrepo.NewNutritionRepo(
 		pool,
 		cfg.DatabaseOperationTimeout,
 	)
 
-	// 8. Создаём service
 	nutritionService := service.NewNutritionService(
 		nutritionRepo,
 	)
 
-	// 9. Создаём HTTP-handler
 	nutritionHandler := handler.NewNutritionHandler(
 		nutritionService,
 	)
@@ -95,7 +85,6 @@ func main() {
 
 	foodHandler := handler.NewFoodHandler(foodService)
 
-	// 7. Запускаем HTTP-сервер
 	httpShutdown, err := server.RunREST(
 		fmt.Sprintf(":%s", cfg.HTTPPort),
 		nutritionHandler,
