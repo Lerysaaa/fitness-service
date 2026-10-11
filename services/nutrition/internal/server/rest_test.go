@@ -3,6 +3,8 @@ package server
 import (
 	"context"
 	"errors"
+	"io"
+	"net/http"
 	"net/http/httptest"
 	"os"
 	"strings"
@@ -201,3 +203,41 @@ func checkStatus(
 	}
 }
 
+
+// sendTestRequest выполняет HTTP-запрос с необязательными JWT и JSON-телом.
+func sendTestRequest(
+	t *testing.T,
+	client *http.Client,
+	baseURL string,
+	method string,
+	path string,
+	token string,
+	body string,
+) (int, []byte) {
+	t.Helper()
+
+	req, err := http.NewRequest(method, baseURL+path, strings.NewReader(body))
+	if err != nil {
+		t.Fatalf("create HTTP request: %v", err)
+	}
+
+	if body != "" {
+		req.Header.Set("Content-Type", "application/json")
+	}
+	if token != "" {
+		req.Header.Set("Authorization", "Bearer "+token)
+	}
+
+	resp, err := client.Do(req)
+	if err != nil {
+		t.Fatalf("send HTTP request: %v", err)
+	}
+	defer resp.Body.Close()
+
+	responseBody, err := io.ReadAll(resp.Body)
+	if err != nil {
+		t.Fatalf("read HTTP response: %v", err)
+	}
+
+	return resp.StatusCode, responseBody
+}
