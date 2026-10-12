@@ -151,3 +151,23 @@ func (h *MealHandler) GetDiarySummary(w http.ResponseWriter, r *http.Request) {
 	}
 	writeJSON(w, http.StatusOK, summary)
 }
+
+func (h *MealHandler) GetWeeklyReport(w http.ResponseWriter, r *http.Request) {
+	userID := middleware.GetUserID(r.Context())
+	if userID == "" {
+		writeError(w, http.StatusUnauthorized, "user not authenticated")
+		return
+	}
+
+	report, err := h.service.GetWeeklyReport(r.Context(), userID, r.URL.Query().Get("start"))
+	if err != nil {
+		if errors.Is(err, service.ErrInvalidInput) {
+			writeError(w, http.StatusBadRequest, "invalid start date")
+		} else {
+			logger.FromContext(r.Context()).Error().Err(err).Msg("failed to calculate weekly diary")
+			writeError(w, http.StatusInternalServerError, "internal server error")
+		}
+		return
+	}
+	writeJSON(w, http.StatusOK, report)
+}
