@@ -134,11 +134,16 @@ func TestNutritionProfileHTTP(t *testing.T) {
 	foodService := service.NewFoodService(foodRepo)
 	foodHandler := handler.NewFoodHandler(foodService)
 
+	mealRepo := postgresrepo.NewMealRepo(pool, 2*time.Second)
+	mealService := service.NewMealService(mealRepo)
+	mealHandler := handler.NewMealHandler(mealService)
+
 	// 5. Запускаем временный HTTP-сервер.
 	httpServer := httptest.NewServer(
 		NewRouter(
 			nutritionHandler,
 			foodHandler,
+			mealHandler,
 			testJWTSecret,
 			time.Second,
 			func(ctx context.Context) error {
@@ -863,6 +868,10 @@ func TestNutritionProfileHTTP(t *testing.T) {
 		if !softDeleted {
 			t.Fatal("food was not soft deleted")
 		}
+	})
+
+	t.Run("meal diary HTTP", func(t *testing.T) {
+		testMealDiaryHTTP(t, ctx, pool, client, httpServer.URL, tokenA, tokenB)
 	})
 
 }
