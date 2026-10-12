@@ -10,8 +10,10 @@ import (
 )
 
 type fakeDiaryRepository struct {
-	created *domain.Meal
-	calls   int
+	created    *domain.Meal
+	calls      int
+	weekly     []domain.DiarySummary
+	weeklyUser string
 }
 
 func (f *fakeDiaryRepository) CreateMeal(_ context.Context, m *domain.Meal) (*domain.Meal, error) {
@@ -31,6 +33,13 @@ func (f *fakeDiaryRepository) CreateMeal(_ context.Context, m *domain.Meal) (*do
 
 func (f *fakeDiaryRepository) ListMeals(_ context.Context, _ string, _, _ time.Time) ([]domain.Meal, error) {
 	return []domain.Meal{}, nil
+}
+
+func (f *fakeDiaryRepository) ListDailySummaries(
+	_ context.Context, user string, _, _ time.Time,
+) ([]domain.DiarySummary, error) {
+	f.weeklyUser = user
+	return f.weekly, nil
 }
 
 func (f *fakeDiaryRepository) DeleteMeal(_ context.Context, _, _ string) (bool, error) {
