@@ -14,6 +14,7 @@ import (
 
 	"fitness-platform/services/nutrition/internal/domain"
 	postgresrepo "fitness-platform/services/nutrition/internal/repository/postgres"
+	"fitness-platform/services/nutrition/internal/service"
 )
 
 func sendDiaryRequest(
@@ -192,6 +193,50 @@ func testMealDiaryHTTP(
 		if !foundOats || !foundShared {
 			t.Fatalf("expected both food snapshots, got %+v", meals[0].Items)
 		}
+	})
+
+	t.Run("weekly report includes goals and protects user data", func(t *testing.T) {
+		status, body := sendDiaryRequest(t, client, base, http.MethodGet,
+			"/nutrition/diary/weekly?start=2026-10-12", tokenA, "")
+		checkStatus(t, status, http.StatusOK, body)
+
+		var report service.WeeklyDiaryReport
+		if err := json.Unmarshal(body, &report); err != nil {
+			t.Fatalf("decode weekly report: %v", err)
+		}
+		if report.StartDate != "2026-10-12" || report.EndDate != "2026-10-18" ||
+			len(report.Days) != 7 || report.TrackedDays != 1 ||
+			report.Totals.Meals != 1 || report.Totals.Items != 2 ||
+			report.Totals.Calories != 330 || report.Totals.Carbs != 49.8 {
+			t.Fatalf("wrong weekly totals: %+v", report)
+		}
+		if report.DailyTargets == nil || report.Days[0].CaloriesVsTarget == nil ||
+			report.AverageCaloriesVsTargetTrackedDay == nil {
+			t.Fatalf("missing user goal comparison: %+v", report)
+		}
+		if report.Days[1].Date != "2026-10-13" ||
+			report.Days[1].Meals != 0 || report.Days[1].CaloriesVsTarget != nil {
+			t.Fatalf("empty day was interpreted as logged: %+v", report.Days[1])
+		}
+
+		status, body = sendDiaryRequest(t, client, base, http.MethodGet,
+			"/nutrition/diary/weekly?start=2026-10-12", tokenB, "")
+		checkStatus(t, status, http.StatusOK, body)
+		var other service.WeeklyDiaryReport
+		if err := json.Unmarshal(body, &other); err != nil {
+			t.Fatalf("decode user B weekly report: %v", err)
+		}
+		if other.Totals.Meals != 0 || other.Totals.Calories != 0 ||
+			other.TrackedDays != 0 {
+			t.Fatalf("user B can see user A's diary: %+v", other)
+		}
+
+		status, body = sendDiaryRequest(t, client, base, http.MethodGet,
+			"/nutrition/diary/weekly?start=bad-date", tokenA, "")
+		checkStatus(t, status, http.StatusBadRequest, body)
+		status, body = sendDiaryRequest(t, client, base, http.MethodGet,
+			"/nutrition/diary/weekly?start=2026-10-12", "", "")
+		checkStatus(t, status, http.StatusUnauthorized, body)
 	})
 
 	t.Run("owner can delete meal", func(t *testing.T) {
