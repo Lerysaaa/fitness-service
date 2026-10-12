@@ -99,7 +99,7 @@ func main() {
 		pool,
 		cfg.DatabaseOperationTimeout,
 	)
-	mealService := service.NewMealService(mealRepo)
+	mealService := service.NewMealService(mealRepo, nutritionService)
 	mealHandler := handler.NewMealHandler(mealService)
 
 	// 7. Запускаем HTTP-сервер
