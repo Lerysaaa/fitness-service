@@ -259,6 +259,10 @@ func TestNutritionRepositoryIntegration(t *testing.T) {
 	t.Run("food repository", func(t *testing.T) {
 		testFoodRepository(t, ctx, pool)
 	})
+
+	t.Run("meal diary schema", func(t *testing.T) {
+		testNutritionMealSchema(t, ctx, pool)
+	})
 }
 
 // Создаём тестовый профиль.
