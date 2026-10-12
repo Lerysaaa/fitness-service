@@ -135,7 +135,7 @@ func TestNutritionProfileHTTP(t *testing.T) {
 	foodHandler := handler.NewFoodHandler(foodService)
 
 	mealRepo := postgresrepo.NewMealRepo(pool, 2*time.Second)
-	mealService := service.NewMealService(mealRepo)
+	mealService := service.NewMealService(mealRepo, nutritionService)
 	mealHandler := handler.NewMealHandler(mealService)
 
 	// 5. Запускаем временный HTTP-сервер.
