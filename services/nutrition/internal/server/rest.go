@@ -22,6 +22,7 @@ import (
 func NewRouter(
 	nutritionHandler *handler.NutritionHandler,
 	foodHandler *handler.FoodHandler,
+	mealHandler *handler.MealHandler,
 	jwtSecret string,
 	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
@@ -97,6 +98,11 @@ func NewRouter(
 			"/nutrition/foods/{id}",
 			foodHandler.DeleteFood,
 		)
+
+		r.Post("/nutrition/meals", mealHandler.CreateMeal)
+		r.Get("/nutrition/meals", mealHandler.ListMeals)
+		r.Delete("/nutrition/meals/{id}", mealHandler.DeleteMeal)
+		r.Get("/nutrition/diary/summary", mealHandler.GetDiarySummary)
 	})
 
 	return r
@@ -108,6 +114,7 @@ func RunREST(
 	addr string,
 	nutritionHandler *handler.NutritionHandler,
 	foodHandler *handler.FoodHandler,
+	mealHandler *handler.MealHandler,
 	jwtSecret string,
 	readinessTimeout time.Duration,
 	readinessChecks ...ReadinessCheck,
@@ -116,6 +123,7 @@ func RunREST(
 	router := NewRouter(
 		nutritionHandler,
 		foodHandler,
+		mealHandler,
 		jwtSecret,
 		readinessTimeout,
 		readinessChecks...,
