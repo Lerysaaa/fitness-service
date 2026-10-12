@@ -55,7 +55,12 @@ func (s *MealService) CreateMeal(ctx context.Context, userID string, meal *domai
 			Grams: item.Grams,
 		})
 	}
-	return s.repo.CreateMeal(ctx, normalized)
+	created, err := s.repo.CreateMeal(ctx, normalized)
+	if err != nil {
+		return nil, err
+	}
+	calculateMealTotals(created)
+	return created, nil
 }
 
 func (s *MealService) ListMeals(ctx context.Context, userID, date string) ([]domain.Meal, error) {
@@ -67,7 +72,14 @@ func (s *MealService) ListMeals(ctx context.Context, userID, date string) ([]dom
 	if err != nil {
 		return nil, err
 	}
-	return s.repo.ListMeals(ctx, ownerID, start, end)
+	meals, err := s.repo.ListMeals(ctx, ownerID, start, end)
+	if err != nil {
+		return nil, err
+	}
+	for i := range meals {
+		calculateMealTotals(&meals[i])
+	}
+	return meals, nil
 }
 
 func (s *MealService) DeleteMeal(ctx context.Context, userID, mealID string) (bool, error) {
