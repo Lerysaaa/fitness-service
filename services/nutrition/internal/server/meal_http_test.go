@@ -163,9 +163,34 @@ func testMealDiaryHTTP(
 		if err := json.Unmarshal(body, &meals); err != nil {
 			t.Fatalf("decode meals: %v", err)
 		}
-		if len(meals) != 1 || meals[0].Calories != 330 ||
-			meals[0].Items[0].FoodName != "Diary oats" {
-			t.Fatalf("meal snapshot changed: %+v", meals)
+		if len(meals) != 1 || len(meals[0].Items) != 2 ||
+			meals[0].Calories != 330 || meals[0].Protein != 12 ||
+			meals[0].Fat != 9 || meals[0].Carbs != 49.8 {
+			t.Fatalf("meal totals changed: %+v", meals)
+		}
+		foundOats := false
+		foundShared := false
+		for _, item := range meals[0].Items {
+			switch item.FoodID {
+			case a.ID:
+				foundOats = true
+				if item.FoodName != "Diary oats" ||
+					item.CaloriesPer100g != 180 || item.Calories != 270 ||
+					item.Protein != 9 || item.Fat != 6 || item.Carbs != 45 {
+					t.Fatalf("historical food snapshot changed: %+v", item)
+				}
+			case sharedID:
+				foundShared = true
+				if item.FoodName != "Shared diary food" ||
+					item.Calories != 60 {
+					t.Fatalf("shared food snapshot changed: %+v", item)
+				}
+			default:
+				t.Fatalf("unexpected food in meal: %+v", item)
+			}
+		}
+		if !foundOats || !foundShared {
+			t.Fatalf("expected both food snapshots, got %+v", meals[0].Items)
 		}
 	})
 
