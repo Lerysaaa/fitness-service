@@ -103,6 +103,7 @@ func NewRouter(
 		r.Get("/nutrition/meals", mealHandler.ListMeals)
 		r.Delete("/nutrition/meals/{id}", mealHandler.DeleteMeal)
 		r.Get("/nutrition/diary/summary", mealHandler.GetDiarySummary)
+		r.Get("/nutrition/diary/weekly", mealHandler.GetWeeklyReport)
 	})
 
 	return r
