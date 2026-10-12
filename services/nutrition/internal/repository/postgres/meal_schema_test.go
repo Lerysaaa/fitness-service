@@ -3,6 +3,7 @@ package postgres
 import (
 	"context"
 	"testing"
+	"time"
 
 	"github.com/jackc/pgx/v5/pgxpool"
 )
@@ -120,4 +121,54 @@ func testNutritionMealSchema(t *testing.T, ctx context.Context, pool *pgxpool.Po
 			t.Fatalf("meal items not deleted: count=%d err=%v", count, err)
 		}
 	})
+
+	t.Run("weekly SQL aggregation uses UTC and isolates users", func(t *testing.T) {
+		const anotherUser = "550e8400-e29b-41d4-a716-446655440072"
+		insertMeal := func(owner, when string, grams int) {
+			t.Helper()
+			var createdID string
+			err := pool.QueryRow(ctx, `
+				INSERT INTO nutrition_meals (owner_user_id, meal_type, eaten_at)
+				VALUES ($1::uuid, 'snack', $2::timestamptz)
+				RETURNING id::text
+			`, owner, when).Scan(&createdID)
+			if err != nil {
+				t.Fatalf("insert weekly meal: %v", err)
+			}
+			if grams > 0 {
+				_, err = pool.Exec(ctx, `
+					INSERT INTO nutrition_meal_items (
+						meal_id, food_name, grams, calories_per_100g,
+						protein_per_100g, fat_per_100g, carbs_per_100g
+					) VALUES ($1::uuid, 'Weekly test food', $2, 180, 6, 4, 30)
+				`, createdID, grams)
+				if err != nil {
+					t.Fatalf("insert weekly meal item: %v", err)
+				}
+			}
+		}
+
+		insertMeal(ownerID, "2026-10-12T00:30:00+03:00", 100)
+		insertMeal(ownerID, "2026-10-12T10:00:00+00:00", 150)
+		insertMeal(ownerID, "2026-10-14T18:00:00+00:00", 50)
+		insertMeal(anotherUser, "2026-10-12T12:00:00+00:00", 100)
+
+		repo := NewMealRepo(pool, 2*time.Second)
+		start, err := time.Parse("2006-01-02", "2026-10-12")
+		if err != nil {
+			t.Fatalf("parse start date: %v", err)
+		}
+		week, err := repo.ListDailySummaries(ctx, ownerID, start, start.AddDate(0, 0, 7))
+		if err != nil {
+			t.Fatalf("weekly aggregation: %v", err)
+		}
+		if len(week) != 2 ||
+			week[0].Date != "2026-10-12" || week[0].Meals != 1 ||
+			week[0].Items != 1 || week[0].Calories != 270 ||
+			week[1].Date != "2026-10-14" || week[1].Meals != 1 ||
+			week[1].Calories != 90 {
+			t.Fatalf("wrong UTC grouping or user isolation: %+v", week)
+		}
+	})
+
 }
