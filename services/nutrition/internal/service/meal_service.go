@@ -14,14 +14,20 @@ type MealRepository interface {
 	ListMeals(context.Context, string, time.Time, time.Time) ([]domain.Meal, error)
 	DeleteMeal(context.Context, string, string) (bool, error)
 	GetDiarySummary(context.Context, string, time.Time, time.Time) (*domain.DiarySummary, error)
+	ListDailySummaries(context.Context, string, time.Time, time.Time) ([]domain.DiarySummary, error)
 }
 
 type MealService struct {
-	repo MealRepository
+	repo      MealRepository
+	nutrition *NutritionService
 }
 
-func NewMealService(repo MealRepository) *MealService {
-	return &MealService{repo: repo}
+func NewMealService(repo MealRepository, nutrition ...*NutritionService) *MealService {
+	result := &MealService{repo: repo}
+	if len(nutrition) > 0 {
+		result.nutrition = nutrition[0]
+	}
+	return result
 }
 
 func (s *MealService) CreateMeal(ctx context.Context, userID string, meal *domain.Meal) (*domain.Meal, error) {
